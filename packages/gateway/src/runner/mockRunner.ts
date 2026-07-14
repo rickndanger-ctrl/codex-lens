@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { err, ok, type Result } from '@codex-lens/shared';
 
 import type { Db } from '../db/schema.js';
+import { withAtomicResult } from '../db/transaction.js';
 import type { CodexLensEvent } from '../events/event.js';
 import { appendEvent } from '../events/eventStore.js';
 import { assertCommandAllowed } from '../registry/pathSafety.js';
@@ -43,19 +44,12 @@ export async function runMockTask(
       `Task ${task.id} belongs to project "${task.projectId}", not "${project.id}"`,
     );
   }
-  // Atomically claim the task (queued -> running) before emitting anything:
-  // of any number of concurrent runners exactly one wins the conditional
-  // update, so only one executes and appends lifecycle events. The claim
-  // checks the stored row's project_id, not just the caller's snapshot.
-  const claimed = claimQueuedTask(db, task.id, project.id);
-  if (!claimed.ok) {
-    return claimed;
-  }
-
   const commands = options.commands ?? project.allowedCommands;
   const clock = options.clock ?? (() => new Date().toISOString());
   const events: CodexLensEvent[] = [];
 
+  // Every failed emit or transition below returns early, so `events` only
+  // ever reaches the caller when all of its entries committed.
   const emit = (
     type: CodexLensEvent['type'],
     payload: Record<string, unknown>,
@@ -73,16 +67,24 @@ export async function runMockTask(
     return appended;
   };
 
-  const queuedEvent = emit('queued', { projectId: project.id });
-  if (!queuedEvent.ok) {
-    return queuedEvent;
-  }
-
-  await nextStage();
-
-  const runningEvent = emit('running', { commands: [...commands] });
-  if (!runningEvent.ok) {
-    return runningEvent;
+  // Atomically claim the task (queued -> running) and record the queued and
+  // running events in one transaction: of any number of concurrent runners
+  // exactly one wins the conditional update, and a task never becomes
+  // running without its lifecycle events (or vice versa). The claim checks
+  // the stored row's project_id, not just the caller's snapshot.
+  const claimStage = withAtomicResult(db, () => {
+    const claimed = claimQueuedTask(db, task.id, project.id);
+    if (!claimed.ok) {
+      return claimed;
+    }
+    const queuedEvent = emit('queued', { projectId: project.id });
+    if (!queuedEvent.ok) {
+      return queuedEvent;
+    }
+    return emit('running', { commands: [...commands] });
+  });
+  if (!claimStage.ok) {
+    return claimStage;
   }
 
   for (const command of commands) {
@@ -90,19 +92,23 @@ export async function runMockTask(
 
     const allowed = assertCommandAllowed(command, project.allowedCommands);
     if (!allowed.ok) {
-      const failedEvent = emit('failed', {
-        command,
-        code: allowed.error.code,
-        message: allowed.error.message,
+      // Terminal stage: the failed event and the running -> failed
+      // transition commit together or not at all.
+      const failedStage = withAtomicResult(db, () => {
+        const failedEvent = emit('failed', {
+          command,
+          code: allowed.error.code,
+          message: allowed.error.message,
+        });
+        if (!failedEvent.ok) {
+          return failedEvent;
+        }
+        return transitionTask(db, task.id, 'failed');
       });
-      if (!failedEvent.ok) {
-        return failedEvent;
+      if (!failedStage.ok) {
+        return failedStage;
       }
-      const failed = transitionTask(db, task.id, 'failed');
-      if (!failed.ok) {
-        return failed;
-      }
-      return ok({ task: failed.value, events });
+      return ok({ task: failedStage.value, events });
     }
 
     const logEvent = emit('log', {
@@ -117,17 +123,21 @@ export async function runMockTask(
 
   await nextStage();
 
-  const completeEvent = emit('complete', {
-    exitCode: 0,
-    commandCount: commands.length,
+  // Terminal stage: the complete event and the running -> complete
+  // transition commit together or not at all.
+  const completeStage = withAtomicResult(db, () => {
+    const completeEvent = emit('complete', {
+      exitCode: 0,
+      commandCount: commands.length,
+    });
+    if (!completeEvent.ok) {
+      return completeEvent;
+    }
+    return transitionTask(db, task.id, 'complete');
   });
-  if (!completeEvent.ok) {
-    return completeEvent;
-  }
-  const complete = transitionTask(db, task.id, 'complete');
-  if (!complete.ok) {
-    return complete;
+  if (!completeStage.ok) {
+    return completeStage;
   }
 
-  return ok({ task: complete.value, events });
+  return ok({ task: completeStage.value, events });
 }

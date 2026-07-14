@@ -56,6 +56,14 @@ function fixedClock(): () => string {
   return () => new Date(Date.UTC(2026, 0, 1, 0, 0, tick++)).toISOString();
 }
 
+// Valid timestamps until failAtTick, then garbage: appendEvent rejects the
+// event at exactly that lifecycle stage, simulating an event-write failure.
+function failingClock(failAtTick: number): () => string {
+  const base = fixedClock();
+  let tick = 0;
+  return () => (tick++ === failAtTick ? 'not-a-timestamp' : base());
+}
+
 function getTaskState(db: Db, taskId: string): string {
   const row = db.prepare('SELECT state FROM tasks WHERE id = ?').get(taskId) as {
     state: string;
@@ -225,6 +233,96 @@ describe('runMockTask', () => {
       '2026-01-01T00:00:02.000Z',
       '2026-01-01T00:00:03.000Z',
     ]);
+  });
+
+  it('rolls back the claim when the queued event cannot be written', async () => {
+    const db = open();
+    const task = queuedTask(db);
+
+    const result = await runMockTask(db, task, project, {
+      clock: failingClock(0),
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe('INVALID_CODEX_LENS_EVENT');
+    }
+    expect(getTaskState(db, task.id)).toBe('queued');
+    expect(mustSucceed(listEvents(db, task.id))).toHaveLength(0);
+  });
+
+  it('keeps the task running when the complete event write fails', async () => {
+    const db = open();
+    const task = queuedTask(db);
+
+    // Ticks: 0 queued, 1 running, 2 log, 3 complete <- fails.
+    const result = await runMockTask(db, task, project, {
+      commands: ['echo'],
+      clock: failingClock(3),
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe('INVALID_CODEX_LENS_EVENT');
+    }
+    expect(getTaskState(db, task.id)).toBe('running');
+    expect(
+      mustSucceed(listEvents(db, task.id)).map((event) => event.type),
+    ).toEqual(['queued', 'running', 'log']);
+  });
+
+  it('keeps the task running when the failed event write fails', async () => {
+    const db = open();
+    const task = queuedTask(db);
+
+    // Ticks: 0 queued, 1 running, 2 failed <- fails.
+    const result = await runMockTask(db, task, project, {
+      commands: ['rm -rf /'],
+      clock: failingClock(2),
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe('INVALID_CODEX_LENS_EVENT');
+    }
+    expect(getTaskState(db, task.id)).toBe('running');
+    expect(
+      mustSucceed(listEvents(db, task.id)).map((event) => event.type),
+    ).toEqual(['queued', 'running']);
+  });
+
+  it('rolls back the terminal event when the transition to complete fails', async () => {
+    const db = open();
+    const task = queuedTask(db);
+    const base = fixedClock();
+    let tick = 0;
+    const clock = (): string => {
+      // Tick 2 is the log emit, which runs outside the terminal
+      // transaction: an external writer forces the task terminal there, so
+      // the later running -> complete transition must fail and take its
+      // already-appended complete event down with it.
+      if (tick === 2) {
+        db.prepare("UPDATE tasks SET state = 'failed' WHERE id = ?").run(
+          task.id,
+        );
+      }
+      tick++;
+      return base();
+    };
+
+    const result = await runMockTask(db, task, project, {
+      commands: ['echo'],
+      clock,
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe('INVALID_TASK_TRANSITION');
+    }
+    expect(getTaskState(db, task.id)).toBe('failed');
+    expect(
+      mustSucceed(listEvents(db, task.id)).map((event) => event.type),
+    ).toEqual(['queued', 'running', 'log']);
   });
 
   it('never imports child_process, git, or network modules', () => {
