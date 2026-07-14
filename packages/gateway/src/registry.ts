@@ -1,11 +1,7 @@
 import { err, ok, type Result } from '@codex-lens/shared';
 
 import { canonicalizePath, isWithinRoot } from './registry/pathSafety.js';
-import {
-  CODEX_LENS_REPO_ROOT,
-  REPO_REGISTRY,
-  type RepoRegistryEntry,
-} from './registryConfig.js';
+import { CODEX_LENS_REPO_ROOT, REPO_REGISTRY } from './registryConfig.js';
 
 export interface RegisteredRepo {
   id: string;
@@ -17,15 +13,12 @@ function hasTraversalSegment(candidatePath: string): boolean {
   return candidatePath.split(/[\\/]+/u).includes('..');
 }
 
-export function resolveRepo(
-  id: string,
-  registry: readonly RepoRegistryEntry[] = REPO_REGISTRY,
-): Result<RegisteredRepo> {
+export function resolveRepo(id: string): Result<RegisteredRepo> {
   if (typeof id !== 'string' || id.trim().length === 0) {
     return err('INVALID_REPO_ID', 'Repo id must be a non-empty string');
   }
 
-  const entry = registry.find((candidate) => candidate.id === id);
+  const entry = REPO_REGISTRY.find((candidate) => candidate.id === id);
   if (entry === undefined) {
     return err('UNKNOWN_REPO', `Repo is not registered: "${id}"`);
   }
@@ -33,10 +26,7 @@ export function resolveRepo(
   return ok({ id: entry.id, path: entry.path, editable: entry.editable });
 }
 
-export function assertEditableTarget(
-  targetPath: string,
-  registry: readonly RepoRegistryEntry[] = REPO_REGISTRY,
-): Result<string> {
+export function assertEditableTarget(targetPath: string): Result<string> {
   if (typeof targetPath !== 'string' || targetPath.trim().length === 0) {
     return err('INVALID_TARGET_PATH', 'Target path must be a non-empty string');
   }
@@ -68,7 +58,7 @@ export function assertEditableTarget(
     );
   }
 
-  const owner = registry.find(
+  const owner = REPO_REGISTRY.find(
     (entry) => entry.editable && isWithinRoot(canonicalTarget, entry.path),
   );
   if (owner === undefined) {

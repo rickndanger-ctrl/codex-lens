@@ -18,15 +18,16 @@ export const SAMPLE_REPO_ROOT = path.resolve(
   fileURLToPath(new URL('../fixtures/sample-project/', import.meta.url)),
 );
 
-export const REPO_REGISTRY: readonly RepoRegistryEntry[] = [
-  {
-    id: SAMPLE_REPO_ID,
-    path: SAMPLE_REPO_ROOT,
-    editable: true,
-  },
-  {
-    id: CODEX_LENS_REPO_ID,
-    path: CODEX_LENS_REPO_ROOT,
-    editable: false,
-  },
-];
+export const REPO_REGISTRY: readonly Readonly<RepoRegistryEntry>[] =
+  Object.freeze([
+    Object.freeze({
+      id: SAMPLE_REPO_ID,
+      path: SAMPLE_REPO_ROOT,
+      editable: true,
+    }),
+    Object.freeze({
+      id: CODEX_LENS_REPO_ID,
+      path: CODEX_LENS_REPO_ROOT,
+      editable: false,
+    }),
+  ]);

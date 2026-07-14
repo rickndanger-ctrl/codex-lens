@@ -1,4 +1,5 @@
 import { realpathSync } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -7,6 +8,7 @@ import { describe, expect, it } from 'vitest';
 import { assertEditableTarget, resolveRepo } from '../src/registry.js';
 import {
   CODEX_LENS_REPO_ROOT,
+  REPO_REGISTRY,
   SAMPLE_REPO_ID,
   SAMPLE_REPO_ROOT,
 } from '../src/registryConfig.js';
@@ -128,6 +130,66 @@ describe('assertEditableTarget', () => {
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.error.code).toBe('INVALID_TARGET_PATH');
+    }
+  });
+});
+
+describe('registry injection resistance', () => {
+  const rogueEntry = { id: 'rogue', path: '/', editable: true };
+
+  it('freezes the configured allowlist against adding entries', () => {
+    expect(Object.isFrozen(REPO_REGISTRY)).toBe(true);
+    expect(() =>
+      (REPO_REGISTRY as unknown as (typeof rogueEntry)[]).push(rogueEntry),
+    ).toThrow(TypeError);
+  });
+
+  it('freezes each entry against flipping the editable flag', () => {
+    for (const entry of REPO_REGISTRY) {
+      expect(Object.isFrozen(entry)).toBe(true);
+    }
+    const codexLens = REPO_REGISTRY.find((entry) => !entry.editable);
+    expect(codexLens).toBeDefined();
+    expect(() => {
+      (codexLens as unknown as { editable: boolean }).editable = true;
+    }).toThrow(TypeError);
+  });
+
+  it('ignores a caller-supplied registry argument (legacy signature)', () => {
+    const injectedRegistry = [rogueEntry];
+    const arbitraryTarget = realpathSync.native(os.tmpdir());
+
+    const targetResult = (
+      assertEditableTarget as unknown as (
+        targetPath: string,
+        registry?: unknown,
+      ) => ReturnType<typeof assertEditableTarget>
+    )(arbitraryTarget, injectedRegistry);
+
+    expect(targetResult.ok).toBe(false);
+    if (!targetResult.ok) {
+      expect(targetResult.error.code).toBe('TARGET_NOT_EDITABLE');
+    }
+
+    const repoResult = (
+      resolveRepo as unknown as (
+        id: string,
+        registry?: unknown,
+      ) => ReturnType<typeof resolveRepo>
+    )('rogue', injectedRegistry);
+
+    expect(repoResult.ok).toBe(false);
+    if (!repoResult.ok) {
+      expect(repoResult.error.code).toBe('UNKNOWN_REPO');
+    }
+  });
+
+  it('never authorizes paths outside the configured allowlist', () => {
+    const result = assertEditableTarget(os.homedir());
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe('TARGET_NOT_EDITABLE');
     }
   });
 });
