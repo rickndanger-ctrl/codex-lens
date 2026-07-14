@@ -6,6 +6,8 @@ import {
   createEngineeringPlan,
   parseEngineeringPlan,
   toJSON,
+  transitionEngineeringPlan,
+  type EngineeringPlan,
   type EngineeringPlanInput,
 } from './engineering-plan.js';
 
@@ -107,5 +109,75 @@ describe('EngineeringPlan', () => {
     if (!parsed.ok) return;
     expect(parsed.value).not.toBe(created.value);
     expect(Object.isFrozen(parsed.value)).toBe(true);
+  });
+});
+
+describe('transitionEngineeringPlan', () => {
+  const statuses = Object.values(EngineeringPlanStatus);
+  const allowed = new Set([
+    `${EngineeringPlanStatus.Draft}->${EngineeringPlanStatus.ReadyForApproval}`,
+    `${EngineeringPlanStatus.ReadyForApproval}->${EngineeringPlanStatus.Approved}`,
+    `${EngineeringPlanStatus.Approved}->${EngineeringPlanStatus.SentToCodex}`,
+    `${EngineeringPlanStatus.SentToCodex}->${EngineeringPlanStatus.Completed}`,
+  ]);
+
+  function planWithStatus(status: EngineeringPlanStatus): EngineeringPlan {
+    const created = createEngineeringPlan({ ...validInput, status });
+    if (!created.ok) {
+      throw new Error(`test setup: could not create plan with status ${status}`);
+    }
+    return created.value;
+  }
+
+  it('covers all 25 (from, to) status pairs', () => {
+    const pairs = statuses.flatMap((fromStatus) =>
+      statuses.map((toStatus) => [fromStatus, toStatus] as const),
+    );
+    expect(pairs).toHaveLength(25);
+
+    for (const [fromStatus, toStatus] of pairs) {
+      const result = transitionEngineeringPlan(planWithStatus(fromStatus), toStatus);
+
+      if (allowed.has(`${fromStatus}->${toStatus}`)) {
+        expect(result.ok, `${fromStatus} -> ${toStatus} should be allowed`).toBe(true);
+        if (!result.ok) continue;
+        expect(result.value.status).toBe(toStatus);
+      } else {
+        expect(result.ok, `${fromStatus} -> ${toStatus} should be rejected`).toBe(false);
+        if (result.ok) continue;
+        expect(result.error.code).toBe('ILLEGAL_ENGINEERING_PLAN_TRANSITION');
+        expect(result.error.message).toContain(`from "${fromStatus}"`);
+        expect(result.error.message).toContain(`to "${toStatus}"`);
+      }
+    }
+  });
+
+  it('refreshes updatedAt on a successful transition', () => {
+    const plan = planWithStatus(EngineeringPlanStatus.Draft);
+    const result = transitionEngineeringPlan(
+      plan,
+      EngineeringPlanStatus.ReadyForApproval,
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(Date.parse(result.value.updatedAt)).toBeGreaterThanOrEqual(
+      Date.parse(plan.updatedAt),
+    );
+    expect(result.value.createdAt).toBe(plan.createdAt);
+  });
+
+  it('leaves the original plan deep-unchanged and returns a new reference', () => {
+    const plan = planWithStatus(EngineeringPlanStatus.Approved);
+    const snapshot = structuredClone(plan);
+
+    const result = transitionEngineeringPlan(plan, EngineeringPlanStatus.SentToCodex);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value).not.toBe(plan);
+    expect(plan).toEqual(snapshot);
+    expect(plan.status).toBe(EngineeringPlanStatus.Approved);
+    expect(Object.isFrozen(result.value)).toBe(true);
   });
 });
