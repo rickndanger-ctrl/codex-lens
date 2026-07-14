@@ -60,3 +60,5 @@ export {
   transitionTask,
 } from './tasks/index.js';
 export type { CreateTaskInput, Task, TaskState } from './tasks/index.js';
+export { runMockTask } from './runner/index.js';
+export type { MockRunOptions, MockRunResult } from './runner/index.js';
