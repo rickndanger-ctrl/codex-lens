@@ -8,7 +8,7 @@ import { appendEvent } from '../events/eventStore.js';
 import { assertCommandAllowed } from '../registry/pathSafety.js';
 import type { RegistryRecord } from '../registry/projectRegistry.js';
 import type { Task } from '../tasks/task.js';
-import { transitionTask } from '../tasks/taskStore.js';
+import { claimQueuedTask, transitionTask } from '../tasks/taskStore.js';
 
 export interface MockRunOptions {
   /**
@@ -43,19 +43,13 @@ export async function runMockTask(
       `Task ${task.id} belongs to project "${task.projectId}", not "${project.id}"`,
     );
   }
-  // Check the stored state, not the caller's snapshot, so a task that was
-  // already run cannot be started again from a stale Task object.
-  const stored = db
-    .prepare('SELECT state FROM tasks WHERE id = ?')
-    .get(task.id) as { state: string } | undefined;
-  if (stored === undefined) {
-    return err('TASK_NOT_FOUND', `No task with id ${task.id}`);
-  }
-  if (stored.state !== 'queued') {
-    return err(
-      'TASK_NOT_RUNNABLE',
-      `Task ${task.id} is in state "${stored.state}"; only queued tasks can be run`,
-    );
+  // Atomically claim the task (queued -> running) before emitting anything:
+  // of any number of concurrent runners exactly one wins the conditional
+  // update, so only one executes and appends lifecycle events. The claim
+  // checks the stored row's project_id, not just the caller's snapshot.
+  const claimed = claimQueuedTask(db, task.id, project.id);
+  if (!claimed.ok) {
+    return claimed;
   }
 
   const commands = options.commands ?? project.allowedCommands;
@@ -86,10 +80,6 @@ export async function runMockTask(
 
   await nextStage();
 
-  const running = transitionTask(db, task.id, 'running');
-  if (!running.ok) {
-    return running;
-  }
   const runningEvent = emit('running', { commands: [...commands] });
   if (!runningEvent.ok) {
     return runningEvent;

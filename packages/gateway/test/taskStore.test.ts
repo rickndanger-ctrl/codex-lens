@@ -5,7 +5,11 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { openDb, type Db } from '../src/db/schema.js';
-import { createTask, transitionTask } from '../src/tasks/taskStore.js';
+import {
+  claimQueuedTask,
+  createTask,
+  transitionTask,
+} from '../src/tasks/taskStore.js';
 
 const dbs = new Set<Db>();
 const tempDirs = new Set<string>();
@@ -272,5 +276,62 @@ describe('transitionTask', () => {
     const complete = mustSucceed(transitionTask(reopenedDb, task.id, 'complete'));
     expect(complete.state).toBe('complete');
     expect(complete.id).toBe(task.id);
+  });
+});
+
+describe('claimQueuedTask', () => {
+  it('claims a queued task, moving it to running', () => {
+    const db = open(':memory:');
+    const task = mustSucceed(
+      createTask(db, { projectId: 'project-1', idempotencyKey: 'key-1' }),
+    );
+
+    const claimed = mustSucceed(claimQueuedTask(db, task.id, 'project-1'));
+
+    expect(claimed.id).toBe(task.id);
+    expect(claimed.state).toBe('running');
+    expect(getState(db, task.id)).toBe('running');
+  });
+
+  it('rejects a second claim on an already-claimed task', () => {
+    const db = open(':memory:');
+    const task = mustSucceed(
+      createTask(db, { projectId: 'project-1', idempotencyKey: 'key-1' }),
+    );
+    mustSucceed(claimQueuedTask(db, task.id, 'project-1'));
+
+    const again = claimQueuedTask(db, task.id, 'project-1');
+
+    expect(again.ok).toBe(false);
+    if (!again.ok) {
+      expect(again.error.code).toBe('TASK_NOT_RUNNABLE');
+    }
+    expect(getState(db, task.id)).toBe('running');
+  });
+
+  it('rejects a claim when the stored project_id does not match', () => {
+    const db = open(':memory:');
+    const task = mustSucceed(
+      createTask(db, { projectId: 'project-1', idempotencyKey: 'key-1' }),
+    );
+
+    const result = claimQueuedTask(db, task.id, 'project-2');
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe('TASK_PROJECT_MISMATCH');
+    }
+    expect(getState(db, task.id)).toBe('queued');
+  });
+
+  it('returns a failed Result for an unknown task id', () => {
+    const db = open(':memory:');
+
+    const result = claimQueuedTask(db, 'missing-task', 'project-1');
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe('TASK_NOT_FOUND');
+    }
   });
 });

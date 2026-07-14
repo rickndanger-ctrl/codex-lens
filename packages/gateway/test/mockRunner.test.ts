@@ -161,6 +161,52 @@ describe('runMockTask', () => {
     expect(mustSucceed(listEvents(db, task.id))).toHaveLength(0);
   });
 
+  it('rejects a task whose stored project_id no longer matches, even with a matching snapshot', async () => {
+    const db = open();
+    const task = queuedTask(db);
+    // Simulate drift between the caller's snapshot and the store: the
+    // in-memory task still claims project.id, but the row moved elsewhere.
+    db.prepare('UPDATE tasks SET project_id = ? WHERE id = ?').run(
+      'other-project',
+      task.id,
+    );
+    expect(task.projectId).toBe(project.id);
+
+    const result = await runMockTask(db, task, project, { clock: fixedClock() });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe('TASK_PROJECT_MISMATCH');
+    }
+    expect(getTaskState(db, task.id)).toBe('queued');
+    expect(mustSucceed(listEvents(db, task.id))).toHaveLength(0);
+  });
+
+  it('lets exactly one of two concurrent runners claim the task', async () => {
+    const db = open();
+    const task = queuedTask(db);
+
+    const [first, second] = await Promise.all([
+      runMockTask(db, task, project, { clock: fixedClock() }),
+      runMockTask(db, task, project, { clock: fixedClock() }),
+    ]);
+
+    const outcomes = [first, second];
+    const winners = outcomes.filter((result) => result.ok);
+    const losers = outcomes.filter((result) => !result.ok);
+    expect(winners).toHaveLength(1);
+    expect(losers).toHaveLength(1);
+    if (!losers[0]!.ok) {
+      expect(losers[0]!.error.code).toBe('TASK_NOT_RUNNABLE');
+    }
+
+    expect(getTaskState(db, task.id)).toBe('complete');
+    // Exactly one lifecycle's worth of events: the loser never emitted.
+    expect(
+      mustSucceed(listEvents(db, task.id)).map((event) => event.type),
+    ).toEqual(['queued', 'running', 'log', 'log', 'complete']);
+  });
+
   it('stamps events with the injected clock', async () => {
     const db = open();
     const task = queuedTask(db);

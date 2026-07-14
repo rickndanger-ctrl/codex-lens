@@ -105,6 +105,66 @@ export function createTask(db: Db, input: CreateTaskInput): Result<Task> {
   }
 }
 
+export function claimQueuedTask(
+  db: Db,
+  taskId: string,
+  projectId: string,
+): Result<Task> {
+  if (taskId.trim().length === 0) {
+    return err('INVALID_TASK_ID', 'taskId must not be empty');
+  }
+  if (projectId.trim().length === 0) {
+    return err('INVALID_PROJECT_ID', 'projectId must not be empty');
+  }
+
+  try {
+    // The conditional UPDATE is the claim: of any number of concurrent
+    // claimants, exactly one sees the queued row and wins the transition.
+    const claimed = db
+      .prepare(
+        `UPDATE tasks
+         SET state = 'running', updated_at = @now
+         WHERE id = @taskId AND state = 'queued' AND project_id = @projectId
+         RETURNING ${TASK_COLUMNS}`,
+      )
+      .get({
+        taskId,
+        projectId,
+        now: new Date().toISOString(),
+      }) as TaskRow | undefined;
+
+    if (claimed !== undefined) {
+      return rowToTask(claimed);
+    }
+
+    const row = db
+      .prepare(
+        `SELECT ${TASK_COLUMNS}
+         FROM tasks
+         WHERE id = ?`,
+      )
+      .get(taskId) as TaskRow | undefined;
+
+    if (row === undefined) {
+      return err('TASK_NOT_FOUND', `No task with id ${taskId}`);
+    }
+
+    if (row.project_id !== projectId) {
+      return err(
+        'TASK_PROJECT_MISMATCH',
+        `Task ${taskId} belongs to project "${row.project_id}", not "${projectId}"`,
+      );
+    }
+
+    return err(
+      'TASK_NOT_RUNNABLE',
+      `Task ${taskId} is in state "${row.state}"; only queued tasks can be run`,
+    );
+  } catch (error) {
+    return err('TASK_STORE_WRITE_FAILED', errorMessage(error));
+  }
+}
+
 export function transitionTask(
   db: Db,
   taskId: string,
