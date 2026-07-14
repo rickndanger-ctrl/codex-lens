@@ -32,10 +32,13 @@ export {
   RegistryRecordSchema,
   assertCommandAllowed,
   canonicalizePath,
+  getProjectById,
   isWithinRoot,
+  loadRegistry,
   parseRegistryRecord,
   projectRegistryRecordSchema,
   resolveWorkingDir,
+  seedRegistry,
 } from './registry/index.js';
 export type { RegistryRecord, RegistryRecordInput } from './registry/index.js';
 export {
