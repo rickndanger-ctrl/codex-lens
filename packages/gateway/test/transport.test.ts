@@ -1,4 +1,6 @@
-import { readFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { afterEach, describe, expect, it } from 'vitest';
@@ -11,6 +13,15 @@ import {
 const handles = new Set<AppServerHandle>();
 const echoFixture = fileURLToPath(
   new URL('./fixtures/echo-jsonl.mjs', import.meta.url),
+);
+const finalMessageFixture = fileURLToPath(
+  new URL('./fixtures/final-jsonl.mjs', import.meta.url),
+);
+const invalidJsonFixture = fileURLToPath(
+  new URL('./fixtures/invalid-jsonl-hang.mjs', import.meta.url),
+);
+const closedStdinFixture = fileURLToPath(
+  new URL('./fixtures/closed-stdin.mjs', import.meta.url),
 );
 
 afterEach(async () => {
@@ -56,6 +67,53 @@ describe('Codex app-server stdio transport', () => {
     await handle.send(message);
 
     await expect(nextMessage).resolves.toEqual({ value: message, done: false });
+  });
+
+  it('delivers a final buffered JSON line before finishing the iterator', async () => {
+    const handle = startAppServer({
+      command: process.execPath,
+      args: [finalMessageFixture],
+    });
+    handles.add(handle);
+
+    await expect(handle[Symbol.asyncIterator]().next()).resolves.toEqual({
+      value: { id: 99, result: 'final message' },
+      done: false,
+    });
+  });
+
+  it('terminates and awaits the child after invalid JSONL finishes messaging', async () => {
+    const tempDirectory = await mkdtemp(path.join(tmpdir(), 'codex-transport-'));
+    const shutdownMarker = path.join(tempDirectory, 'terminated');
+    const handle = startAppServer({
+      command: process.execPath,
+      args: [invalidJsonFixture, shutdownMarker],
+    });
+    handles.add(handle);
+
+    await expect(handle[Symbol.asyncIterator]().next()).rejects.toThrow(
+      'Codex app-server emitted invalid JSONL',
+    );
+    await handle.close();
+
+    await expect(readFile(shutdownMarker, 'utf8')).resolves.toBe('terminated');
+    await rm(tempDirectory, { recursive: true, force: true });
+  });
+
+  it('rejects an EPIPE write without an unhandled stdin error', async () => {
+    const handle = startAppServer({
+      command: process.execPath,
+      args: [closedStdinFixture],
+    });
+    handles.add(handle);
+
+    await expect(handle[Symbol.asyncIterator]().next()).resolves.toEqual({
+      value: { ready: true },
+      done: false,
+    });
+    await expect(handle.send({ id: 1 })).rejects.toMatchObject({
+      code: 'EPIPE',
+    });
   });
 
   it('uses CODEX_APP_SERVER_CMD as the configurable command path', async () => {

@@ -58,6 +58,15 @@ function createHandle(
   let terminalError: Error | undefined;
   let finished = false;
   let closing = false;
+  let resolveChildClosed: () => void;
+  const childClosed = new Promise<void>((resolve) => {
+    resolveChildClosed = resolve;
+  });
+
+  // A write callback receives EPIPE, but streams also emit `error`. Keeping an
+  // error listener installed prevents a send/close race with child death from
+  // becoming an uncaught process-level exception.
+  child.stdin.on('error', () => undefined);
 
   const finish = (error?: Error): void => {
     if (finished) {
@@ -110,15 +119,16 @@ function createHandle(
   });
 
   child.once('error', (error) => finish(error));
-  child.once('exit', (code, signal) => {
+  child.once('close', (code, signal) => {
     if (closing || code === 0) {
       finish();
-      return;
+    } else {
+      const detail =
+        signal === null ? `code ${String(code)}` : `signal ${signal}`;
+      finish(new Error(`Codex app-server exited with ${detail}`));
     }
 
-    const detail =
-      signal === null ? `code ${String(code)}` : `signal ${signal}`;
-    finish(new Error(`Codex app-server exited with ${detail}`));
+    resolveChildClosed();
   });
 
   const nextMessage = (): Promise<IteratorResult<AppServerMessage>> => {
@@ -166,20 +176,19 @@ function createHandle(
     },
 
     async close() {
-      if (closing || finished) {
-        if (!finished) {
-          await new Promise<void>((resolve) =>
-            child.once('exit', () => resolve()),
-          );
-        }
+      if (closing) {
+        await childClosed;
         return;
       }
 
       closing = true;
-      child.stdin.end();
-      await new Promise<void>((resolve) => {
-        child.once('exit', () => resolve());
-      });
+      if (!child.stdin.destroyed) {
+        child.stdin.end();
+      }
+      if (child.exitCode === null && child.signalCode === null) {
+        child.kill();
+      }
+      await childClosed;
     },
   };
 }
