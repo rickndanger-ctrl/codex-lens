@@ -53,5 +53,11 @@ export type {
   ExecutionPlanJson,
   ExecutionStatus,
 } from './execution-plan.js';
+export {
+  loadConversation,
+  loadEngineeringPlan,
+  saveConversation,
+  saveEngineeringPlan,
+} from './persistence.js';
 export { err, ok } from './result.js';
 export type { DomainError, Result } from './result.js';
