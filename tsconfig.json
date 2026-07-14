@@ -5,6 +5,7 @@
     "moduleResolution": "NodeNext",
     "strict": true,
     "noUncheckedIndexedAccess": true,
+    "types": ["node"],
     "skipLibCheck": true
   },
   "include": ["packages/**/*.ts"],
