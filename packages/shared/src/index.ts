@@ -15,10 +15,16 @@ export type {
   ApprovalTarget,
   ApprovalTargetType as ApprovalTargetTypeValue,
 } from './approval-contract.js';
+export {
+  canApproveEngineeringPlan,
+  createExecutionPlanFromApproval,
+} from './authorization.js';
+export type { AuthorizedExecutionPlanInput } from './authorization.js';
 export { contentDigest } from './digest.js';
 export {
   EngineeringPlanStatus,
   createEngineeringPlan,
+  engineeringPlanContentDigest,
   engineeringPlanSchema,
   parseEngineeringPlan,
   toJSON as engineeringPlanToJSON,
