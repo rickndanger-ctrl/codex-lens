@@ -55,6 +55,11 @@ export type {
   ExecutionPlanJson,
   ExecutionStatus,
 } from './execution-plan.js';
+export { approvePlan, requestApproval } from './plan-approval.js';
+export type {
+  PlanApprovalInput,
+  PlanApprovalOutcome,
+} from './plan-approval.js';
 export {
   loadConversation,
   loadEngineeringPlan,
