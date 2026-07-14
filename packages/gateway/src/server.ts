@@ -10,6 +10,7 @@ export const GATEWAY_VERSION = '0.0.0';
 
 export interface BuildServerOptions {
   db?: Db;
+  dbPath?: string;
   version?: string;
 }
 
@@ -55,7 +56,7 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
     },
   });
 
-  const db = options.db ?? openDb(':memory:');
+  const db = options.db ?? openDb(options.dbPath ?? ':memory:');
   if (options.db === undefined) {
     server.addHook('onClose', async () => {
       db.close();
