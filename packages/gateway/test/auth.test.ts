@@ -2,7 +2,7 @@ import { Ajv } from 'ajv';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { GATEWAY_TOKEN_ENV, unauthorizedResponseSchema } from '../src/auth/index.js';
-import { buildServer } from '../src/server.js';
+import { GATEWAY_VERSION, buildServer } from '../src/server.js';
 
 const validateUnauthorizedBody = new Ajv().compile(unauthorizedResponseSchema);
 
@@ -42,7 +42,7 @@ describe('registerAuth', () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(response.json()).toEqual({ status: 'ok' });
+    expect(response.json()).toEqual({ status: 'ok', version: GATEWAY_VERSION });
   });
 
   it('rejects a protected route with 401 when no token is provided', async () => {
