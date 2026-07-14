@@ -2,6 +2,8 @@ import { pathToFileURL } from 'node:url';
 
 import { buildServer } from './server.js';
 
+export { assertExecutionApproved } from './approval-binding.js';
+
 export const GATEWAY_HOST = '127.0.0.1';
 const DEFAULT_PORT = 8787;
 
