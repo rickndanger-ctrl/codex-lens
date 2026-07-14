@@ -1,17 +1,51 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, expectTypeOf, it } from 'vitest';
 
 import {
+  approvePlan,
   ApprovalStatus,
   ApprovalTargetType,
+  ConversationSessionSchema,
   contentDigest,
   createApprovalContract,
+  createConversationSession,
   createEngineeringPlan,
   createExecutionPlanFromApproval,
+  convertConversationToEngineeringPlan,
   EngineeringPlanStatus,
+  hasUnresolvedQuestions,
+  loadConversation,
+  loadEngineeringPlan,
+  requestApproval,
+  saveConversation,
+  saveEngineeringPlan,
+  transitionConversationSession,
   transitionEngineeringPlan,
 } from '@codex-lens/shared';
+import type { ConversationSession } from '@codex-lens/shared';
 
 describe('@codex-lens/shared', () => {
+  it('exports the M1 public API through the package entry point', () => {
+    expect(ConversationSessionSchema).toBeDefined();
+    expectTypeOf<ConversationSession>().toHaveProperty('conversationId');
+
+    const functions = [
+      createConversationSession,
+      hasUnresolvedQuestions,
+      transitionConversationSession,
+      convertConversationToEngineeringPlan,
+      requestApproval,
+      approvePlan,
+      saveConversation,
+      loadConversation,
+      saveEngineeringPlan,
+      loadEngineeringPlan,
+    ];
+
+    for (const exportedFunction of functions) {
+      expect(typeof exportedFunction).toBe('function');
+    }
+  });
+
   it('mints an execution plan through the public package entry point', () => {
     const createdPlan = createEngineeringPlan({
       engineeringPlanId: 'engineering-plan-122',

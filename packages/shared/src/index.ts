@@ -21,6 +21,17 @@ export {
   createExecutionPlanFromApproval,
 } from './authorization.js';
 export type { AuthorizedExecutionPlanInput } from './authorization.js';
+export {
+  ConversationSessionSchema,
+  createConversationSession,
+  hasUnresolvedQuestions,
+  transitionConversationSession,
+} from './conversation-session.js';
+export type {
+  ConversationSession,
+  ConversationStatus,
+  CreateConversationSessionInput,
+} from './conversation-session.js';
 export { convertConversationToEngineeringPlan } from './conversation-conversion.js';
 export type { ConversationConversion } from './conversation-conversion.js';
 export { contentDigest } from './digest.js';
