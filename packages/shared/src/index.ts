@@ -1,5 +1,20 @@
 export const packageName = '@codex-lens/shared';
 
+export {
+  ApprovalStatus,
+  ApprovalTargetType,
+  approvalContractSchema,
+  createApprovalContract,
+  parseApprovalContract,
+  toJSON as approvalContractToJSON,
+} from './approval-contract.js';
+export type {
+  ApprovalContract,
+  ApprovalContractInput,
+  ApprovalStatus as ApprovalStatusValue,
+  ApprovalTarget,
+  ApprovalTargetType as ApprovalTargetTypeValue,
+} from './approval-contract.js';
 export { contentDigest } from './digest.js';
 export {
   EngineeringPlanStatus,
