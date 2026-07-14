@@ -1,0 +1,24 @@
+import { pathToFileURL } from 'node:url';
+
+import { buildServer } from './server.js';
+
+export const GATEWAY_HOST = '127.0.0.1';
+const DEFAULT_PORT = 8787;
+
+export async function start(): Promise<void> {
+  const server = buildServer();
+  const port = Number.parseInt(process.env.CODEX_LENS_PORT ?? `${DEFAULT_PORT}`, 10);
+
+  await server.listen({
+    host: GATEWAY_HOST,
+    port,
+  });
+  server.log.info({ host: GATEWAY_HOST, port }, 'Codex Lens gateway started');
+}
+
+const entrypoint = process.argv[1];
+if (entrypoint !== undefined && import.meta.url === pathToFileURL(entrypoint).href) {
+  await start();
+}
+
+export { buildServer } from './server.js';
