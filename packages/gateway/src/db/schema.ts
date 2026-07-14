@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS events (
 );
 
 CREATE INDEX IF NOT EXISTS idx_events_task_id_seq ON events (task_id, seq);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_events_task_id_seq_unique ON events (task_id, seq);
 `;
 
 export function openDb(path: string): Db {

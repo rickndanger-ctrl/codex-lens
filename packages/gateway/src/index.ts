@@ -38,3 +38,12 @@ export {
   resolveWorkingDir,
 } from './registry/index.js';
 export type { RegistryRecord, RegistryRecordInput } from './registry/index.js';
+export {
+  AppendEventSchema,
+  CODEX_LENS_EVENT_TYPES,
+  CodexLensEventSchema,
+  appendEvent,
+  listEvents,
+  parseCodexLensEvent,
+} from './events/index.js';
+export type { AppendEventInput, CodexLensEvent } from './events/index.js';
