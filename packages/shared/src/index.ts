@@ -19,6 +19,7 @@ export {
   EXECUTION_STATUSES,
   executionPlanSchema,
   parseExecutionPlan,
+  transitionExecutionPlan,
   toJSON,
 } from './execution-plan.js';
 export type {

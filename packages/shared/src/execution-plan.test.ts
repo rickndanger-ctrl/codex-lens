@@ -5,6 +5,7 @@ import {
   createExecutionPlan,
   EXECUTION_STATUSES,
   parseExecutionPlan,
+  transitionExecutionPlan,
   toJSON,
   type CreateExecutionPlanInput,
   type ExecutionPlan,
@@ -145,5 +146,51 @@ describe('EXECUTION_STATUSES', () => {
       'Complete',
       'Failed',
     ]);
+  });
+});
+
+describe('transitionExecutionPlan', () => {
+  const allowedTransitions = new Set([
+    'Pending->Ready',
+    'Ready->Running',
+    'Running->Blocked',
+    'Running->Complete',
+    'Running->Failed',
+    'Blocked->Ready',
+  ]);
+
+  it('enforces every pair in the 6-by-6 transition matrix', () => {
+    let checkedPairs = 0;
+
+    for (const fromStatus of EXECUTION_STATUSES) {
+      for (const toStatus of EXECUTION_STATUSES) {
+        checkedPairs += 1;
+        const plan = mustCreate({ ...validInput, executionStatus: fromStatus });
+        const result = transitionExecutionPlan(plan, toStatus);
+        const transition = `${fromStatus}->${toStatus}`;
+
+        expect(result.ok, transition).toBe(allowedTransitions.has(transition));
+        if (!result.ok) {
+          expect(result.error.code, transition).toBe('EXECUTION_PLAN_INVALID_TRANSITION');
+        }
+      }
+    }
+
+    expect(checkedPairs).toBe(36);
+  });
+
+  it('returns a new plan without changing the original', () => {
+    const original = mustCreate();
+    const snapshot = toJSON(original);
+    const result = transitionExecutionPlan(original, 'Ready');
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value).not.toBe(original);
+    expect(result.value.executionStatus).toBe('Ready');
+    expect(result.value.updatedAt).not.toBe(original.updatedAt);
+    expect(result.value.contentDigest).not.toBe(original.contentDigest);
+    expect(original).toEqual(snapshot);
+    expect(original.executionStatus).toBe('Pending');
   });
 });

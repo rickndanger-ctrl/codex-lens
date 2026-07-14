@@ -69,6 +69,15 @@ export type ExecutionPlanJson = {
     : ExecutionPlan[K];
 };
 
+const allowedTransitions: Readonly<Record<ExecutionStatus, readonly ExecutionStatus[]>> = {
+  Pending: ['Ready'],
+  Ready: ['Running'],
+  Running: ['Blocked', 'Complete', 'Failed'],
+  Blocked: ['Ready'],
+  Complete: [],
+  Failed: [],
+};
+
 function formatIssues(error: z.ZodError): string {
   return error.issues
     .map((issue) => `${issue.path.join('.') || '(root)'}: ${issue.message}`)
@@ -110,6 +119,42 @@ export function parseExecutionPlan(json: unknown): Result<ExecutionPlan> {
       'contentDigest does not match the content fields',
     );
   }
+  return ok(parsed.data);
+}
+
+export function transitionExecutionPlan(
+  plan: ExecutionPlan,
+  toStatus: ExecutionStatus,
+): Result<ExecutionPlan> {
+  if (!allowedTransitions[plan.executionStatus].includes(toStatus)) {
+    return err(
+      'EXECUTION_PLAN_INVALID_TRANSITION',
+      `Cannot transition execution plan from ${plan.executionStatus} to ${toStatus}`,
+    );
+  }
+
+  const updatedAt = new Date(
+    Math.max(Date.now(), Date.parse(plan.updatedAt) + 1),
+  ).toISOString();
+  const content = {
+    ...Object.fromEntries(
+      Object.keys(contentFieldsSchema.shape).map((key) => [
+        key,
+        plan[key as keyof typeof contentFieldsSchema.shape],
+      ]),
+    ),
+    executionStatus: toStatus,
+  };
+  const parsed = executionPlanSchema.safeParse({
+    ...plan,
+    executionStatus: toStatus,
+    updatedAt,
+    contentDigest: contentDigest(content),
+  });
+  if (!parsed.success) {
+    return err('EXECUTION_PLAN_INVALID', formatIssues(parsed.error));
+  }
+
   return ok(parsed.data);
 }
 
