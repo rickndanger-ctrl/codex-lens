@@ -50,6 +50,8 @@ export const ConversationSessionSchema = conversationSessionContentSchema
 
 export type ConversationSession = z.output<typeof ConversationSessionSchema>;
 
+export type ConversationStatus = ConversationSession['conversationStatus'];
+
 const createConversationSessionInputSchema = conversationSessionContentSchema
   .extend({
     conversationId: nonEmptyString.optional(),
@@ -105,4 +107,64 @@ export function createConversationSession(
   }
 
   return ok(immutableSession(parsed.data));
+}
+
+const LINEAR_STATUS_PATH: readonly ConversationStatus[] = [
+  'Draft',
+  'Clarifying',
+  'ReadyForPlan',
+  'ConvertedToEngineeringPlan',
+];
+
+const TERMINAL_STATUSES: ReadonlySet<ConversationStatus> = new Set([
+  'ConvertedToEngineeringPlan',
+  'Cancelled',
+]);
+
+export function hasUnresolvedQuestions(session: ConversationSession): boolean {
+  return session.openQuestions.some(
+    (question) =>
+      typeof question.answer !== 'string' ||
+      question.answer.trim().length === 0,
+  );
+}
+
+export function transitionConversationSession(
+  session: ConversationSession,
+  targetStatus: ConversationStatus,
+): Result<ConversationSession> {
+  const currentStatus = session.conversationStatus;
+
+  if (TERMINAL_STATUSES.has(currentStatus)) {
+    return err(
+      'ILLEGAL_CONVERSATION_SESSION_TRANSITION',
+      `Conversation session status "${currentStatus}" is terminal; no further transitions are allowed`,
+    );
+  }
+
+  if (targetStatus !== 'Cancelled') {
+    const fromIndex = LINEAR_STATUS_PATH.indexOf(currentStatus);
+    const toIndex = LINEAR_STATUS_PATH.indexOf(targetStatus);
+    if (toIndex !== fromIndex + 1) {
+      return err(
+        'ILLEGAL_CONVERSATION_SESSION_TRANSITION',
+        `Illegal conversation session transition from "${currentStatus}" to "${targetStatus}"`,
+      );
+    }
+  }
+
+  if (targetStatus === 'ReadyForPlan' && hasUnresolvedQuestions(session)) {
+    return err(
+      'UNRESOLVED_OPEN_QUESTIONS',
+      'Cannot transition to "ReadyForPlan" while open questions lack a non-empty answer',
+    );
+  }
+
+  return ok(
+    immutableSession({
+      ...session,
+      conversationStatus: targetStatus,
+      updatedAt: new Date().toISOString(),
+    }),
+  );
 }
