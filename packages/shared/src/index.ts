@@ -7,6 +7,7 @@ export {
   engineeringPlanSchema,
   parseEngineeringPlan,
   toJSON as engineeringPlanToJSON,
+  transitionEngineeringPlan,
 } from './engineering-plan.js';
 export type {
   EngineeringPlan,

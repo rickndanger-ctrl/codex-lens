@@ -178,6 +178,42 @@ export function createEngineeringPlan(
   return ok(immutablePlan(validated.data));
 }
 
+const statusOrder: readonly EngineeringPlanStatus[] = [
+  EngineeringPlanStatus.Draft,
+  EngineeringPlanStatus.ReadyForApproval,
+  EngineeringPlanStatus.Approved,
+  EngineeringPlanStatus.SentToCodex,
+  EngineeringPlanStatus.Completed,
+];
+
+export function transitionEngineeringPlan(
+  plan: EngineeringPlan,
+  toStatus: EngineeringPlanStatus,
+): Result<EngineeringPlan> {
+  const fromIndex = statusOrder.indexOf(plan.status);
+  const toIndex = statusOrder.indexOf(toStatus);
+
+  if (toIndex !== fromIndex + 1) {
+    return err(
+      'ILLEGAL_ENGINEERING_PLAN_TRANSITION',
+      `Illegal engineering plan transition from "${plan.status}" to "${toStatus}"`,
+    );
+  }
+
+  return ok(
+    immutablePlan({
+      ...plan,
+      requirements: [...plan.requirements],
+      constraints: [...plan.constraints],
+      acceptanceCriteria: [...plan.acceptanceCriteria],
+      assumptions: [...plan.assumptions],
+      risks: [...plan.risks],
+      status: toStatus,
+      updatedAt: new Date().toISOString(),
+    }),
+  );
+}
+
 export function toJSON(plan: EngineeringPlan): string {
   return JSON.stringify(plan);
 }
