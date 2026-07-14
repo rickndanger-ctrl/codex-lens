@@ -1,0 +1,176 @@
+import { randomUUID } from 'node:crypto';
+
+import { err, type Result } from '@codex-lens/shared';
+
+import type { Db } from '../db/schema.js';
+import {
+  parseCreateTaskInput,
+  parseTask,
+  TASK_STATES,
+  type CreateTaskInput,
+  type Task,
+  type TaskState,
+} from './task.js';
+
+interface TaskRow {
+  id: string;
+  project_id: string;
+  state: string;
+  idempotency_key: string;
+  created_at: string;
+  updated_at: string;
+}
+
+const TASK_COLUMNS = `
+  id,
+  project_id,
+  state,
+  idempotency_key,
+  created_at,
+  updated_at
+`;
+
+const VALID_TRANSITIONS: Readonly<Record<TaskState, readonly TaskState[]>> = {
+  queued: ['running'],
+  running: ['complete', 'failed'],
+  complete: [],
+  failed: [],
+};
+
+function rowToTask(row: TaskRow): Result<Task> {
+  const parsed = parseTask({
+    id: row.id,
+    projectId: row.project_id,
+    state: row.state,
+    idempotencyKey: row.idempotency_key,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  });
+  if (!parsed.ok) {
+    return err('INVALID_STORED_TASK', parsed.error.message);
+  }
+
+  return parsed;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+export function createTask(db: Db, input: CreateTaskInput): Result<Task> {
+  const parsed = parseCreateTaskInput(input);
+  if (!parsed.ok) {
+    return parsed;
+  }
+
+  const now = new Date().toISOString();
+
+  try {
+    const row = db
+      .prepare(
+        `INSERT INTO tasks (id, project_id, state, idempotency_key, created_at, updated_at)
+         VALUES (@id, @projectId, 'queued', @idempotencyKey, @now, @now)
+         ON CONFLICT (idempotency_key) DO NOTHING
+         RETURNING ${TASK_COLUMNS}`,
+      )
+      .get({
+        id: randomUUID(),
+        projectId: parsed.value.projectId,
+        idempotencyKey: parsed.value.idempotencyKey,
+        now,
+      }) as TaskRow | undefined;
+
+    if (row !== undefined) {
+      return rowToTask(row);
+    }
+
+    const existing = db
+      .prepare(
+        `SELECT ${TASK_COLUMNS}
+         FROM tasks
+         WHERE idempotency_key = ?`,
+      )
+      .get(parsed.value.idempotencyKey) as TaskRow | undefined;
+
+    if (existing === undefined) {
+      return err(
+        'TASK_STORE_WRITE_FAILED',
+        `Task with idempotencyKey ${parsed.value.idempotencyKey} was neither created nor found`,
+      );
+    }
+
+    return rowToTask(existing);
+  } catch (error) {
+    return err('TASK_STORE_WRITE_FAILED', errorMessage(error));
+  }
+}
+
+export function transitionTask(
+  db: Db,
+  taskId: string,
+  toState: TaskState,
+): Result<Task> {
+  if (taskId.trim().length === 0) {
+    return err('INVALID_TASK_ID', 'taskId must not be empty');
+  }
+  if (!TASK_STATES.includes(toState)) {
+    return err(
+      'INVALID_TASK_STATE',
+      `Unknown task state ${String(toState)}; expected one of ${TASK_STATES.join(', ')}`,
+    );
+  }
+
+  try {
+    const row = db
+      .prepare(
+        `SELECT ${TASK_COLUMNS}
+         FROM tasks
+         WHERE id = ?`,
+      )
+      .get(taskId) as TaskRow | undefined;
+
+    if (row === undefined) {
+      return err('TASK_NOT_FOUND', `No task with id ${taskId}`);
+    }
+
+    const current = rowToTask(row);
+    if (!current.ok) {
+      return current;
+    }
+
+    if (current.value.state === toState) {
+      return current;
+    }
+
+    if (!VALID_TRANSITIONS[current.value.state].includes(toState)) {
+      return err(
+        'INVALID_TASK_TRANSITION',
+        `Task ${taskId} cannot transition from ${current.value.state} to ${toState}`,
+      );
+    }
+
+    const updated = db
+      .prepare(
+        `UPDATE tasks
+         SET state = @toState, updated_at = @now
+         WHERE id = @taskId
+         RETURNING ${TASK_COLUMNS}`,
+      )
+      .get({
+        taskId,
+        toState,
+        now: new Date().toISOString(),
+      }) as TaskRow | undefined;
+
+    if (updated === undefined) {
+      return err(
+        'TASK_STORE_WRITE_FAILED',
+        `SQLite did not return the updated task ${taskId}`,
+      );
+    }
+
+    return rowToTask(updated);
+  } catch (error) {
+    return err('TASK_STORE_WRITE_FAILED', errorMessage(error));
+  }
+}

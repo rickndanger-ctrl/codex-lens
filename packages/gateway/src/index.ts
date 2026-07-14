@@ -47,3 +47,13 @@ export {
   parseCodexLensEvent,
 } from './events/index.js';
 export type { AppendEventInput, CodexLensEvent } from './events/index.js';
+export {
+  CreateTaskSchema,
+  TASK_STATES,
+  TaskSchema,
+  createTask,
+  parseCreateTaskInput,
+  parseTask,
+  transitionTask,
+} from './tasks/index.js';
+export type { CreateTaskInput, Task, TaskState } from './tasks/index.js';
