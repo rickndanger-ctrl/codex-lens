@@ -21,6 +21,8 @@ export {
   createExecutionPlanFromApproval,
 } from './authorization.js';
 export type { AuthorizedExecutionPlanInput } from './authorization.js';
+export { convertConversationToEngineeringPlan } from './conversation-conversion.js';
+export type { ConversationConversion } from './conversation-conversion.js';
 export { contentDigest } from './digest.js';
 export {
   EngineeringPlanStatus,
