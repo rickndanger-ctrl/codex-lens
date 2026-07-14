@@ -43,6 +43,16 @@ export {
   seedRegistry,
 } from './registry/index.js';
 export type { RegistryRecord, RegistryRecordInput } from './registry/index.js';
+export { assertEditableTarget, resolveRepo } from './registry.js';
+export type { RegisteredRepo } from './registry.js';
+export {
+  CODEX_LENS_REPO_ID,
+  CODEX_LENS_REPO_ROOT,
+  REPO_REGISTRY,
+  SAMPLE_REPO_ID,
+  SAMPLE_REPO_ROOT,
+} from './registryConfig.js';
+export type { RepoRegistryEntry } from './registryConfig.js';
 export {
   AppendEventSchema,
   CODEX_LENS_EVENT_TYPES,
