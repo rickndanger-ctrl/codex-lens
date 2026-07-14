@@ -65,10 +65,14 @@ export {
 export type { CreateTaskInput, Task, TaskState } from './tasks/index.js';
 export { runMockTask } from './runner/index.js';
 export type { MockRunOptions, MockRunResult } from './runner/index.js';
-export {
-  HealthRequestSchema,
-  HealthResponseSchema,
-} from './routes/health.js';
+export { startAppServer } from './codex/transport.js';
+export type {
+  AppServerHandle,
+  AppServerMessage,
+  AppServerMessageListener,
+  StartAppServerOptions,
+} from './codex/transport.js';
+export { HealthRequestSchema, HealthResponseSchema } from './routes/health.js';
 export type { HealthResponse } from './routes/health.js';
 export {
   PROJECTS_PATH,

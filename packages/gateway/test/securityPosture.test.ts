@@ -147,13 +147,14 @@ describe('no external network or shell access in gateway source', () => {
     return files;
   }
 
-  const FORBIDDEN_MODULE_IMPORT =
-    /from\s+['"](?:node:)?(?:child_process|net|http|https|dgram|tls)['"]/;
+  const CHILD_PROCESS_IMPORT = /from\s+['"](?:node:)?child_process['"]/;
+  const FORBIDDEN_NETWORK_IMPORT =
+    /from\s+['"](?:node:)?(?:net|http|https|dgram|tls)['"]/;
+  const PROCESS_SPAWN_CALL = /\bspawn(?:Sync)?\s*\(/;
   const FORBIDDEN_CALLS = [
     /\bfetch\s*\(/,
     /\bexecSync\s*\(/,
     /\bexecFile(?:Sync)?\s*\(/,
-    /\bspawn(?:Sync)?\s*\(/,
     /\brequire\s*\(\s*['"](?:node:)?(?:child_process|net|http|https|dgram|tls)['"]\s*\)/,
   ];
 
@@ -164,9 +165,18 @@ describe('no external network or shell access in gateway source', () => {
     for (const file of files) {
       const source = await readFile(file, 'utf8');
       const relative = path.relative(srcDir, file);
+      const isCodexTransport = relative === path.join('codex', 'transport.ts');
       expect(
-        FORBIDDEN_MODULE_IMPORT.test(source),
-        `forbidden module import in ${relative}`,
+        FORBIDDEN_NETWORK_IMPORT.test(source),
+        `forbidden network import in ${relative}`,
+      ).toBe(false);
+      expect(
+        CHILD_PROCESS_IMPORT.test(source) && !isCodexTransport,
+        `forbidden child-process import in ${relative}`,
+      ).toBe(false);
+      expect(
+        PROCESS_SPAWN_CALL.test(source) && !isCodexTransport,
+        `forbidden spawn call in ${relative}`,
       ).toBe(false);
       for (const pattern of FORBIDDEN_CALLS) {
         expect(
