@@ -7,6 +7,7 @@ export {
   createApprovalContract,
   parseApprovalContract,
   toJSON as approvalContractToJSON,
+  transitionApprovalContract,
 } from './approval-contract.js';
 export type {
   ApprovalContract,

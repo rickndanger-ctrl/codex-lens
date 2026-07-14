@@ -136,6 +136,33 @@ export function createApprovalContract(
   return ok(immutableContract(parsed.data));
 }
 
+const allowedTransitions: Readonly<
+  Record<ApprovalStatus, readonly ApprovalStatus[]>
+> = {
+  Pending: [
+    ApprovalStatus.Approved,
+    ApprovalStatus.Rejected,
+    ApprovalStatus.Cancelled,
+  ],
+  Approved: [],
+  Rejected: [],
+  Cancelled: [],
+};
+
+export function transitionApprovalContract(
+  approval: ApprovalContract,
+  toStatus: ApprovalStatus,
+): Result<ApprovalContract> {
+  if (!allowedTransitions[approval.approvalStatus].includes(toStatus)) {
+    return err(
+      'INVALID_APPROVAL_CONTRACT_TRANSITION',
+      `Illegal approval contract transition from "${approval.approvalStatus}" to "${toStatus}"`,
+    );
+  }
+
+  return ok(immutableContract({ ...approval, approvalStatus: toStatus }));
+}
+
 export function toJSON(contract: ApprovalContract): string {
   return JSON.stringify(contract);
 }

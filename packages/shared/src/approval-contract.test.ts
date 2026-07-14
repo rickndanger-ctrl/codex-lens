@@ -6,6 +6,8 @@ import {
   createApprovalContract,
   parseApprovalContract,
   toJSON,
+  transitionApprovalContract,
+  type ApprovalContract,
   type ApprovalContractInput,
 } from './approval-contract.js';
 
@@ -99,5 +101,68 @@ describe('ApprovalContract', () => {
     if (!parsed.ok) return;
     expect(parsed.value).not.toBe(created.value);
     expect(parsed.value.target).not.toBe(created.value.target);
+  });
+});
+
+describe('transitionApprovalContract', () => {
+  const statuses = Object.values(ApprovalStatus);
+
+  const allowedTransitions = new Set([
+    'Pending->Approved',
+    'Pending->Rejected',
+    'Pending->Cancelled',
+  ]);
+
+  function mustCreate(approvalStatus: ApprovalStatus): ApprovalContract {
+    const created = createApprovalContract({ ...validInput, approvalStatus });
+    if (!created.ok) {
+      throw new Error(`fixture creation failed: ${created.error.message}`);
+    }
+    return created.value;
+  }
+
+  it('lists the four statuses', () => {
+    expect(statuses).toEqual(['Pending', 'Approved', 'Rejected', 'Cancelled']);
+  });
+
+  it('enforces every pair in the 4-by-4 transition matrix', () => {
+    let checkedPairs = 0;
+
+    for (const fromStatus of statuses) {
+      for (const toStatus of statuses) {
+        checkedPairs += 1;
+        const contract = mustCreate(fromStatus);
+        const result = transitionApprovalContract(contract, toStatus);
+        const transition = `${fromStatus}->${toStatus}`;
+
+        expect(result.ok, transition).toBe(allowedTransitions.has(transition));
+        if (result.ok) {
+          expect(result.value.approvalStatus, transition).toBe(toStatus);
+        } else {
+          expect(result.error.code, transition).toBe(
+            'INVALID_APPROVAL_CONTRACT_TRANSITION',
+          );
+          expect(result.error.message, transition).toContain(fromStatus);
+          expect(result.error.message, transition).toContain(toStatus);
+        }
+      }
+    }
+
+    expect(checkedPairs).toBe(16);
+  });
+
+  it('returns a new contract without changing the original', () => {
+    const original = mustCreate(ApprovalStatus.Pending);
+    const snapshot = toJSON(original);
+    const result = transitionApprovalContract(original, ApprovalStatus.Approved);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value).not.toBe(original);
+    expect(result.value.approvalStatus).toBe(ApprovalStatus.Approved);
+    expect(Object.isFrozen(result.value)).toBe(true);
+    expect(Object.isFrozen(result.value.target)).toBe(true);
+    expect(toJSON(original)).toBe(snapshot);
+    expect(original.approvalStatus).toBe(ApprovalStatus.Pending);
   });
 });
