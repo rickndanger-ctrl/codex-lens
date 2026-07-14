@@ -44,6 +44,7 @@ export {
   parseExecutionPlan,
   transitionExecutionPlan,
   toJSON,
+  toJSON as executionPlanToJSON,
 } from './execution-plan.js';
 export type {
   CreateExecutionPlanInput,
