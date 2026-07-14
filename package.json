@@ -10,6 +10,7 @@
     "node": ">=26 <27"
   },
   "scripts": {
+    "demo": "node --import tsx packages/shared/src/demo/run-flow.ts",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "test": "vitest run",
@@ -20,6 +21,7 @@
     "@types/node": "^26.1.1",
     "eslint": "^10.7.0",
     "prettier": "^3.9.5",
+    "tsx": "^4.23.1",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.64.0",
     "vitest": "^4.1.10"
