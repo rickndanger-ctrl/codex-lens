@@ -153,23 +153,47 @@ export function transitionTask(
       .prepare(
         `UPDATE tasks
          SET state = @toState, updated_at = @now
-         WHERE id = @taskId
+         WHERE id = @taskId AND state = @fromState
          RETURNING ${TASK_COLUMNS}`,
       )
       .get({
         taskId,
         toState,
+        fromState: current.value.state,
         now: new Date().toISOString(),
       }) as TaskRow | undefined;
 
-    if (updated === undefined) {
-      return err(
-        'TASK_STORE_WRITE_FAILED',
-        `SQLite did not return the updated task ${taskId}`,
-      );
+    if (updated !== undefined) {
+      return rowToTask(updated);
     }
 
-    return rowToTask(updated);
+    // A concurrent writer changed the state between our read and the
+    // conditional update; reload and re-evaluate against the fresh state.
+    const reloadedRow = db
+      .prepare(
+        `SELECT ${TASK_COLUMNS}
+         FROM tasks
+         WHERE id = ?`,
+      )
+      .get(taskId) as TaskRow | undefined;
+
+    if (reloadedRow === undefined) {
+      return err('TASK_NOT_FOUND', `No task with id ${taskId}`);
+    }
+
+    const reloaded = rowToTask(reloadedRow);
+    if (!reloaded.ok) {
+      return reloaded;
+    }
+
+    if (reloaded.value.state === toState) {
+      return reloaded;
+    }
+
+    return err(
+      'INVALID_TASK_TRANSITION',
+      `Task ${taskId} cannot transition from ${reloaded.value.state} to ${toState}`,
+    );
   } catch (error) {
     return err('TASK_STORE_WRITE_FAILED', errorMessage(error));
   }

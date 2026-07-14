@@ -29,6 +29,42 @@ function mustSucceed<T>(result: { ok: true; value: T } | { ok: false }): T {
   return result.value;
 }
 
+// Wraps a db so that a competing write runs just before transitionTask's
+// UPDATE executes, simulating another writer racing between its validation
+// read and its conditional update.
+function withConcurrentWriter(db: Db, competingWrite: () => void): Db {
+  return new Proxy(db, {
+    get(target, prop, receiver) {
+      if (prop !== 'prepare') {
+        const value = Reflect.get(target, prop, receiver);
+        return typeof value === 'function' ? value.bind(target) : value;
+      }
+      return (sql: string) => {
+        const statement = target.prepare(sql);
+        if (sql.trimStart().startsWith('UPDATE')) {
+          const realGet = statement.get.bind(statement);
+          statement.get = (...args: unknown[]) => {
+            competingWrite();
+            return realGet(...args);
+          };
+        }
+        return statement;
+      };
+    },
+  });
+}
+
+function setState(db: Db, taskId: string, state: string): void {
+  db.prepare('UPDATE tasks SET state = ? WHERE id = ?').run(state, taskId);
+}
+
+function getState(db: Db, taskId: string): string {
+  const row = db.prepare('SELECT state FROM tasks WHERE id = ?').get(taskId) as {
+    state: string;
+  };
+  return row.state;
+}
+
 function countTasks(db: Db): number {
   const row = db.prepare('SELECT COUNT(*) AS count FROM tasks').get() as {
     count: number;
@@ -170,6 +206,40 @@ describe('transitionTask', () => {
 
     expect(again).toEqual(running);
     expect(countTasks(db)).toBe(1);
+  });
+
+  it('returns idempotent success when a concurrent writer already applied the same state', () => {
+    const db = open(':memory:');
+    const task = mustSucceed(
+      createTask(db, { projectId: 'project-1', idempotencyKey: 'key-1' }),
+    );
+
+    const racingDb = withConcurrentWriter(db, () => {
+      setState(db, task.id, 'running');
+    });
+    const result = mustSucceed(transitionTask(racingDb, task.id, 'running'));
+
+    expect(result.state).toBe('running');
+    expect(getState(db, task.id)).toBe('running');
+  });
+
+  it('rejects a transition made stale by a concurrent writer', () => {
+    const db = open(':memory:');
+    const task = mustSucceed(
+      createTask(db, { projectId: 'project-1', idempotencyKey: 'key-1' }),
+    );
+    mustSucceed(transitionTask(db, task.id, 'running'));
+
+    const racingDb = withConcurrentWriter(db, () => {
+      setState(db, task.id, 'failed');
+    });
+    const result = transitionTask(racingDb, task.id, 'complete');
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe('INVALID_TASK_TRANSITION');
+    }
+    expect(getState(db, task.id)).toBe('failed');
   });
 
   it('returns a failed Result for an unknown task id', () => {
