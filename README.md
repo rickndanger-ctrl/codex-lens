@@ -23,7 +23,7 @@ This is an npm-workspaces monorepo. All domain code lives in a single workspace 
             └── index.ts               # public API surface (barrel export)
 ```
 
-Every model is built with Zod schemas, constructed through factory functions that return a `Result<T>` (never throw), and frozen for immutability. Serialized records carry a SHA-256 `contentDigest` that is re-verified on parse so tampered or stale content is rejected.
+Every model is built with Zod schemas, constructed through factory functions that return a `Result<T>` (never throw), and frozen for immutability. Serialized Engineering Plans and Execution Plans carry a SHA-256 `contentDigest` that is re-verified on parse so tampered or stale content is rejected; Approval Contracts do not carry a digest of their own — they pin the digest of the target they approve.
 
 ## Domain models
 
@@ -37,13 +37,13 @@ An Execution Plan is the concrete, machine-oriented counterpart to an approved E
 
 ### Approval Contract
 
-An Approval Contract records a human decision about a specific target: who approved, when, why (notes), and exactly what was approved — the target's type (`EngineeringPlan` or `ExecutionPlan`), id, version, and content digest. Pinning the version and digest means an approval is only valid for the exact content that was reviewed. Its lifecycle starts at `Pending` and resolves once, to `Approved`, `Rejected`, or `Cancelled` — all terminal, so an approval can never be reused or reversed.
+An Approval Contract records a human decision about a specific target: who approved, when, why (notes), and exactly what was approved — the target's type (`EngineeringPlan` or `ExecutionPlan`), id, version, and content digest. Pinning the version and digest means an approval is only valid for the exact content that was reviewed. Its lifecycle starts at `Pending` and resolves once, to `Approved`, `Rejected`, or `Cancelled` — all terminal states, from which no further transitions are allowed.
 
 These models meet at the authorization gate (`authorization.ts`): `createExecutionPlanFromApproval` will only mint an Execution Plan from an Approval Contract that is `Approved`, targets the right Engineering Plan, and matches its current version and content digest.
 
 ## Verify
 
-Requires Node >= 26.
+Requires Node 26.x.
 
 ```sh
 npm install
