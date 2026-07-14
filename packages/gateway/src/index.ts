@@ -5,8 +5,10 @@ import { buildServer } from './server.js';
 export const GATEWAY_HOST = '127.0.0.1';
 const DEFAULT_PORT = 8787;
 
-export async function start(): Promise<void> {
-  const server = buildServer();
+export async function start(
+  createServer: typeof buildServer = buildServer,
+): Promise<void> {
+  const server = createServer();
   const port = Number.parseInt(
     process.env.CODEX_LENS_PORT ?? `${DEFAULT_PORT}`,
     10,

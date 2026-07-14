@@ -2,10 +2,12 @@ import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import type { FastifyListenOptions } from 'fastify';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { MockInstance } from 'vitest';
 
 import { GATEWAY_TOKEN_ENV } from '../src/auth/index.js';
-import { GATEWAY_HOST } from '../src/index.js';
+import { GATEWAY_HOST, start } from '../src/index.js';
 import { buildServer } from '../src/server.js';
 
 const TEST_TOKEN = 'security-posture-test-token';
@@ -111,17 +113,20 @@ describe('localhost-only posture', () => {
     expect(GATEWAY_HOST).toBe('127.0.0.1');
   });
 
-  it('binds only loopback addresses when listening', async () => {
+  it('start() passes the loopback host to Fastify without opening a port', async () => {
     const server = buildServer();
     servers.add(server);
+    const listenSpy = vi.spyOn(server, 'listen') as unknown as MockInstance<
+      (options: FastifyListenOptions) => Promise<string>
+    >;
+    listenSpy.mockResolvedValue('http://127.0.0.1:0');
 
-    await server.listen({ host: GATEWAY_HOST, port: 0 });
+    await start(() => server);
 
-    const addresses = server.addresses();
-    expect(addresses.length).toBeGreaterThan(0);
-    for (const address of addresses) {
-      expect(address.address).toBe('127.0.0.1');
-    }
+    expect(listenSpy).toHaveBeenCalledTimes(1);
+    const [options] = listenSpy.mock.calls[0] ?? [];
+    expect(options).toMatchObject({ host: '127.0.0.1' });
+    expect(server.addresses()).toHaveLength(0);
   });
 });
 
