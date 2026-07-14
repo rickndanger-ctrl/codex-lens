@@ -10,7 +10,7 @@
     "node": ">=26 <27"
   },
   "scripts": {
-    "demo": "tsx packages/shared/src/demo/run-flow.ts",
+    "demo": "node --import tsx packages/shared/src/demo/run-flow.ts",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "test": "vitest run",

@@ -20,15 +20,11 @@ describe('demo run-flow script', () => {
   });
 
   it('walks the flow to an approved plan and exits 0', () => {
-    const stdout = execFileSync(
-      'npx',
-      ['tsx', 'packages/shared/src/demo/run-flow.ts'],
-      {
-        cwd: repoRoot,
-        encoding: 'utf8',
-        env: { ...process.env, CODEX_LENS_DATA_DIR: dataDirectory },
-      },
-    );
+    const stdout = execFileSync('npm', ['run', 'demo', '--silent'], {
+      cwd: repoRoot,
+      encoding: 'utf8',
+      env: { ...process.env, CODEX_LENS_DATA_DIR: dataDirectory },
+    });
 
     expect(stdout).toContain('ConversationSession: Draft -> Clarifying');
     expect(stdout).toContain('ConversationSession: Clarifying -> ReadyForPlan');
