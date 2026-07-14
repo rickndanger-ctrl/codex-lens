@@ -41,6 +41,22 @@ async function sendUnauthorized(reply: FastifyReply): Promise<void> {
 export function registerAuth(server: FastifyInstance): void {
   server.addSchema(unauthorizedResponseSchema);
 
+  // Attach the shared 401 schema to every protected route so Fastify
+  // serializes (and thereby enforces) the unauthorized body against it.
+  server.addHook('onRoute', (route) => {
+    if (route.url === HEALTH_PATH) {
+      return;
+    }
+    const existingResponses = (route.schema?.response ?? {}) as Record<string, unknown>;
+    route.schema = {
+      ...route.schema,
+      response: {
+        ...existingResponses,
+        401: { $ref: `${unauthorizedResponseSchema.$id}#` },
+      },
+    };
+  });
+
   server.addHook('onRequest', async (request, reply) => {
     if (request.routeOptions.url === HEALTH_PATH) {
       return;

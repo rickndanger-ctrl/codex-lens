@@ -1,7 +1,10 @@
+import { Ajv } from 'ajv';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { GATEWAY_TOKEN_ENV } from '../src/auth/index.js';
+import { GATEWAY_TOKEN_ENV, unauthorizedResponseSchema } from '../src/auth/index.js';
 import { buildServer } from '../src/server.js';
+
+const validateUnauthorizedBody = new Ajv().compile(unauthorizedResponseSchema);
 
 const TEST_TOKEN = 'test-token-for-ticket-137';
 
@@ -56,6 +59,26 @@ describe('registerAuth', () => {
       error: 'Unauthorized',
       message: expect.stringContaining('bearer token'),
     });
+    expect(validateUnauthorizedBody(response.json())).toBe(true);
+  });
+
+  it('serializes the 401 body through the unauthorized response schema', async () => {
+    const server = makeServer();
+    server.get('/schema-check', async (_request, reply) =>
+      // A 401 body that violates the schema must be rejected by the
+      // route serializer, proving the schema is genuinely applied.
+      reply.code(401).send({ nonsense: true } as never),
+    );
+
+    const rejected = await server.inject({
+      method: 'GET',
+      url: '/schema-check',
+      headers: { authorization: `Bearer ${TEST_TOKEN}` },
+    });
+
+    const body = rejected.json<Record<string, unknown>>();
+    expect(body).not.toHaveProperty('nonsense');
+    expect(body.message).toContain('"statusCode" is required');
   });
 
   it('rejects a protected route with 401 when the token is invalid', async () => {
