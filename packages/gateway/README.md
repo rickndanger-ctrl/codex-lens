@@ -2,6 +2,34 @@
 
 Local HTTP gateway for Codex Lens, built on Fastify.
 
+## Local-only posture
+
+The gateway binds exclusively to the loopback interface (`127.0.0.1`) and is
+never intended to be exposed beyond the local machine. Its source makes no
+external network calls: no `fetch`, no `http`/`https`/`net`/`dgram` clients,
+and no child processes. Task execution is handled by a mock runner that writes
+lifecycle events to a local SQLite database.
+
+No route can commit, push, or deploy. The project registry stores
+`allowCommit`/`allowPush`/`allowDeploy` flags for future policy decisions, but
+no endpoint acts on them or runs git/deploy commands. This posture is enforced
+by `test/securityPosture.test.ts`, which pins the route surface, the loopback
+bind, and the absence of network/shell imports.
+
+## Endpoints
+
+All endpoints exchange JSON. Every route except `GET /v1/health` requires
+`Authorization: Bearer <CODEX_LENS_GATEWAY_TOKEN>`.
+
+| Method | Path | Auth | Description |
+| --- | --- | --- | --- |
+| `GET` | `/` | yes | Gateway identity: `{ "name": "@codex-lens/gateway", "status": "ok" }`. |
+| `GET` | `/v1/health` | no | Liveness probe: `{ "status": "ok", "version": "<gateway version>" }`. |
+| `GET` | `/v1/projects` | yes | Lists registered projects from the local registry: `{ "projects": [...] }`. |
+| `POST` | `/v1/tasks` | yes | Creates a task. Body: `{ "projectId", "idempotencyKey", "requestedPath"? }`. The requested path must resolve inside the project root. Returns the task record; replays of the same idempotency key return the existing task. |
+| `GET` | `/v1/tasks/:taskId` | yes | Returns a task record by id, or 404. |
+| `GET` | `/v1/tasks/:taskId/events` | yes | Returns the task's normalized lifecycle events: `{ "events": [...] }`. |
+
 ## Configuration
 
 | Environment variable | Required | Description |
