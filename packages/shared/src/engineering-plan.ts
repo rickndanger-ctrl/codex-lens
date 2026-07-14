@@ -124,6 +124,12 @@ function planContent(plan: EngineeringPlanContent): EngineeringPlanContent {
   };
 }
 
+export function engineeringPlanContentDigest(
+  plan: EngineeringPlanContent,
+): string {
+  return contentDigest(planContent(plan));
+}
+
 function validationError(error: z.ZodError): Result<never> {
   const issue = error.issues[0];
   if (!issue) {
@@ -168,7 +174,7 @@ export function createEngineeringPlan(
 
   const candidate = {
     ...parsed.data,
-    contentDigest: contentDigest(planContent(parsed.data)),
+    contentDigest: engineeringPlanContentDigest(parsed.data),
   };
   const validated = engineeringPlanSchema.safeParse(candidate);
   if (!validated.success) {
@@ -234,7 +240,7 @@ export function parseEngineeringPlan(json: string): Result<EngineeringPlan> {
     return validationError(parsed.error);
   }
 
-  const expectedDigest = contentDigest(planContent(parsed.data));
+  const expectedDigest = engineeringPlanContentDigest(parsed.data);
   if (parsed.data.contentDigest !== expectedDigest) {
     return err(
       'INVALID_ENGINEERING_PLAN',
