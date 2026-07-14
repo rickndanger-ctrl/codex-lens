@@ -1,5 +1,7 @@
 import Fastify, { type FastifyInstance } from 'fastify';
 
+import { HEALTH_PATH, registerAuth } from './auth/index.js';
+
 const REDACTED_LOG_FIELDS = [
   'authorization',
   'token',
@@ -36,6 +38,12 @@ export function buildServer(): FastifyInstance {
       },
     },
   });
+
+  registerAuth(server);
+
+  server.get(HEALTH_PATH, async () => ({
+    status: 'ok',
+  }));
 
   server.get('/', async () => ({
     name: '@codex-lens/gateway',
