@@ -55,6 +55,7 @@ export {
   TASK_STATES,
   TaskSchema,
   createTask,
+  getTaskById,
   parseCreateTaskInput,
   parseTask,
   transitionTask,
@@ -73,3 +74,11 @@ export {
   ProjectsResponseSchema,
 } from './routes/projects.js';
 export type { ProjectsResponse } from './routes/projects.js';
+export {
+  CreateTaskRequestSchema,
+  TASKS_PATH,
+  TaskEventsResponseSchema,
+  TaskParamsSchema,
+  TaskResponseSchema,
+} from './routes/tasks.js';
+export type { CreateTaskRequest, TaskEventsResponse } from './routes/tasks.js';

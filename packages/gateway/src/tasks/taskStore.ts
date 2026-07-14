@@ -105,6 +105,30 @@ export function createTask(db: Db, input: CreateTaskInput): Result<Task> {
   }
 }
 
+export function getTaskById(db: Db, taskId: string): Result<Task> {
+  if (taskId.trim().length === 0) {
+    return err('INVALID_TASK_ID', 'taskId must not be empty');
+  }
+
+  try {
+    const row = db
+      .prepare(
+        `SELECT ${TASK_COLUMNS}
+         FROM tasks
+         WHERE id = ?`,
+      )
+      .get(taskId) as TaskRow | undefined;
+
+    if (row === undefined) {
+      return err('TASK_NOT_FOUND', `No task with id ${taskId}`);
+    }
+
+    return rowToTask(row);
+  } catch (error) {
+    return err('TASK_STORE_READ_FAILED', errorMessage(error));
+  }
+}
+
 export function claimQueuedTask(
   db: Db,
   taskId: string,

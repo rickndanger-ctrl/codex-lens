@@ -6,4 +6,9 @@ export {
   parseTask,
 } from './task.js';
 export type { CreateTaskInput, Task, TaskState } from './task.js';
-export { claimQueuedTask, createTask, transitionTask } from './taskStore.js';
+export {
+  claimQueuedTask,
+  createTask,
+  getTaskById,
+  transitionTask,
+} from './taskStore.js';

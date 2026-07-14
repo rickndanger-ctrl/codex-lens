@@ -4,6 +4,7 @@ import { registerAuth } from './auth/index.js';
 import { openDb, type Db } from './db/schema.js';
 import { registerHealthRoute } from './routes/health.js';
 import { registerProjectsRoute } from './routes/projects.js';
+import { registerTasksRoutes } from './routes/tasks.js';
 
 export const GATEWAY_VERSION = '0.0.0';
 
@@ -64,6 +65,7 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
   registerAuth(server);
   registerHealthRoute(server, options.version ?? GATEWAY_VERSION);
   registerProjectsRoute(server, db);
+  registerTasksRoutes(server, db);
 
   server.get('/', async () => ({
     name: '@codex-lens/gateway',
