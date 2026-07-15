@@ -465,24 +465,63 @@ describe('writeFileInSandbox trackability', () => {
     TIMEOUT_MS,
   );
 
-  it(
-    'refuses a write into the sandbox git directory',
-    async () => {
+  /**
+   * The git dir holds the baseline every diff is taken against and every
+   * rollback resets to. A write that lands in it does not just escape review —
+   * it edits the record used to detect the escape, so `config`, a hook, or a
+   * ref could redirect or silently neuter both. The guard therefore has to hold
+   * for every spelling of the same file, not just the obvious one.
+   */
+  it.each([
+    ['the plain path', path.join('.git', 'hooks', 'pre-commit')],
+    ['a "./"-prefixed path', './.git/config'],
+    ['an uppercase variant', path.join('.GIT', 'hooks', 'pre-commit')],
+    ['a mixed-case variant', path.join('.Git', 'config')],
+    ['a redundant-separator path', '.git//config'],
+    ['a nested git directory', path.join('src', '.git', 'config')],
+  ])(
+    'refuses a write into a git directory named by %s',
+    async (_label, relPath) => {
       const sandbox = await prepare();
 
-      const result = await writeFileInSandbox(
-        sandbox,
-        path.join('.git', 'hooks', 'pre-commit'),
-        '#!/bin/sh\n',
-      );
+      const result = await writeFileInSandbox(sandbox, relPath, 'pwned');
 
       expect(result.ok).toBe(false);
       if (!result.ok) {
         expect(result.error.code).toBe('SANDBOX_WRITE_NOT_TRACKABLE');
       }
-      expect(
-        existsSync(path.join(sandbox.root, '.git', 'hooks', 'pre-commit')),
-      ).toBe(false);
+    },
+    TIMEOUT_MS,
+  );
+
+  /**
+   * The case variants above resolve to the real `.git` only on a
+   * case-insensitive filesystem; elsewhere they are merely ordinary paths that
+   * happen to be spelled oddly. Asserting the sandbox git dir is intact pins
+   * the consequence that actually matters on either kind of filesystem.
+   */
+  it(
+    'leaves the sandbox git directory untouched by rejected writes',
+    async () => {
+      const sandbox = await prepare();
+      const gitDir = path.join(sandbox.root, '.git');
+      const configBefore = await readFile(path.join(gitDir, 'config'), 'utf8');
+
+      for (const relPath of [
+        './.git/config',
+        path.join('.GIT', 'config'),
+        path.join('.Git', 'hooks', 'pre-commit'),
+        path.join('.git', 'hooks', 'pre-commit'),
+      ]) {
+        expect((await writeFileInSandbox(sandbox, relPath, 'pwned')).ok).toBe(
+          false,
+        );
+      }
+
+      expect(await readFile(path.join(gitDir, 'config'), 'utf8')).toBe(
+        configBefore,
+      );
+      expect(existsSync(path.join(gitDir, 'hooks', 'pre-commit'))).toBe(false);
     },
     TIMEOUT_MS,
   );

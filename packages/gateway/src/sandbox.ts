@@ -452,19 +452,10 @@ export async function writeFileInSandbox(
       `Sandbox-relative path must not be absolute: "${relPath}"`,
     );
   }
-  const segments = relPath.split(/[\\/]+/u);
-  if (segments.includes('..')) {
+  if (relPath.split(/[\\/]+/u).includes('..')) {
     return err(
       'SANDBOX_ESCAPE_REJECTED',
       `Sandbox-relative path must not contain "..": "${relPath}"`,
-    );
-  }
-  // The sandbox's own git dir is the record of what changed; a write into it
-  // would rewrite the very thing captureDiff and rollback read.
-  if (segments[0] === GIT_DIR) {
-    return err(
-      'SANDBOX_WRITE_NOT_TRACKABLE',
-      `Sandbox-relative path must not be inside the sandbox git directory: "${relPath}"`,
     );
   }
 
@@ -479,6 +470,21 @@ export async function writeFileInSandbox(
     return err(
       'SANDBOX_ESCAPE_REJECTED',
       `Write target escapes the sandbox root: "${relPath}"`,
+    );
+  }
+
+  // Decided on the resolved path, not the caller's spelling of it: `.git/x` and
+  // `./.git/x` are the same file, and only the resolved form collapses the two.
+  // The sandbox's own git dir is the record of what changed, so a write into it
+  // would rewrite the very thing captureDiff and rollback read. Matched
+  // case-insensitively because a case-insensitive filesystem — the default on
+  // macOS and Windows — opens `.GIT/config` as `.git/config` regardless of how
+  // this module spells it.
+  const targetSegments = path.relative(root, target).split(path.sep);
+  if (targetSegments.some((segment) => segment.toLowerCase() === GIT_DIR)) {
+    return err(
+      'SANDBOX_WRITE_NOT_TRACKABLE',
+      `Sandbox-relative path must not be inside a git directory: "${relPath}"`,
     );
   }
 
@@ -527,10 +533,7 @@ export async function writeFileInSandbox(
     );
   }
 
-  const trackable = await assertTrackable(
-    root,
-    path.relative(root, target).split(path.sep).join('/'),
-  );
+  const trackable = await assertTrackable(root, targetSegments.join('/'));
   if (!trackable.ok) {
     return trackable;
   }
