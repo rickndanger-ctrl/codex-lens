@@ -158,12 +158,15 @@ describe('no external network or shell access in gateway source', () => {
     /\brequire\s*\(\s*['"](?:node:)?(?:child_process|net|http|https|dgram|tls)['"]\s*\)/,
   ];
 
-  // The only two modules allowed to start a child process: the Codex
-  // app-server transport and the sandboxed test runner. Both spawn a fixed
-  // command with shell:false. Adding a third entry is a posture change.
+  // The only modules allowed to start a child process: the Codex app-server
+  // transport, the sandboxed test runner, and the sandbox helper, which shells
+  // out to git to snapshot and roll back a throwaway working copy. Each spawns
+  // a fixed command with shell:false and never interpolates caller input into
+  // the argv. Adding a fourth entry is a posture change.
   const SPAWN_ALLOWLIST = new Set([
     path.join('codex', 'transport.ts'),
     'test-runner.ts',
+    'sandbox.ts',
   ]);
 
   it('imports no networking or process-spawning modules', async () => {
