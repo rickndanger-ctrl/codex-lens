@@ -37,6 +37,7 @@ export {
   assertCommandAllowed,
   canonicalizePath,
   getProjectById,
+  isInsideRootLexically,
   isWithinRoot,
   loadRegistry,
   parseRegistryRecord,
@@ -77,6 +78,11 @@ export {
 export type { CreateTaskInput, Task, TaskState } from './tasks/index.js';
 export { runMockTask } from './runner/index.js';
 export type { MockRunOptions, MockRunResult } from './runner/index.js';
+export {
+  SAMPLE_REPO_TEST_COMMAND,
+  generateExecutionPlan,
+} from './plan-generation.js';
+export type { ExecutionPlanRequest } from './plan-generation.js';
 export { runTests } from './test-runner.js';
 export type { Sandbox, TestCounts, TestRun } from './test-runner.js';
 export { startAppServer } from './codex/transport.js';
