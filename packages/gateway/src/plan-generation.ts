@@ -39,6 +39,16 @@ function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0;
 }
 
+/**
+ * POSIX single-quoting. Everything inside single quotes is literal except a
+ * single quote itself, which is spliced in as `'\''`. Filenames may legally
+ * contain quotes, spaces and `$`, so a path is never interpolated into a
+ * rollback command raw.
+ */
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", `'\\''`)}'`;
+}
+
 function exists(candidatePath: string): boolean {
   try {
     // `lstat`, not `stat`: a dangling symlink is still something we refuse to
@@ -165,12 +175,28 @@ function resolvePlanFiles(
     { key: 'delete', requested: request.filesToDelete ?? [], mustExist: true },
   ] as const;
 
+  // Claimed after canonicalization, so two spellings of one file collide the
+  // same way two identical spellings do. Modifying and deleting the same file
+  // is not a plan an executor can carry out, and neither is creating a file
+  // twice; both are refused rather than silently resolved to one of them.
+  const claimedBy = new Map<string, string>();
+
   for (const group of groups) {
     for (const requestedPath of group.requested) {
       const file = resolvePlanFile(requestedPath, canonicalRepoRoot, group.mustExist);
       if (!file.ok) {
         return file;
       }
+      const claimant = claimedBy.get(file.value);
+      if (claimant !== undefined) {
+        return err(
+          'PLAN_CONFLICTING_FILE',
+          claimant === group.key
+            ? `Plan lists the same file to ${group.key} twice: "${requestedPath}"`
+            : `Plan cannot both ${claimant} and ${group.key} the same file: "${requestedPath}"`,
+        );
+      }
+      claimedBy.set(file.value, group.key);
       resolved[group.key].push(file.value);
     }
   }
@@ -255,13 +281,11 @@ function estimatedDuration(files: ResolvedFiles): number {
  */
 function rollbackStrategy(files: ResolvedFiles): string {
   const commands = [
-    ...files.modify.map((file) => `git restore -- '${file}'`),
-    ...files.delete.map((file) => `git restore -- '${file}'`),
-    ...files.create.map((file) => `rm -f '${file}'`),
+    ...files.modify.map((file) => `git restore -- ${shellQuote(file)}`),
+    ...files.delete.map((file) => `git restore -- ${shellQuote(file)}`),
+    ...files.create.map((file) => `rm -f ${shellQuote(file)}`),
   ];
 
-  // Apostrophes stay out of the prose: single quotes here mean "a path", and
-  // nothing else, so a reader or a script can tell what will be touched.
   return [
     'Roll back only the files this plan names, leaving unrelated uncommitted work in place.',
     `From inside the repo, run: ${commands.join('; ')}.`,

@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -138,6 +139,50 @@ describe('generateExecutionPlan', () => {
   });
 });
 
+/**
+ * POSIX single-quoting, written out independently of the implementation so the
+ * tests below assert on the shell's rules rather than on the code under test.
+ */
+function quote(value: string): string {
+  return `'${value.split("'").join(`'\\''`)}'`;
+}
+
+function occurrences(haystack: string, needle: string): number {
+  return haystack.split(needle).length - 1;
+}
+
+/**
+ * Runs the strategy's command list in a real shell with `git` and `rm` shimmed
+ * to record their arguments instead of doing anything, and reports what each
+ * was actually invoked with.
+ *
+ * This is what makes the quoting testable: the shell, not a regex, decides
+ * where one command ends and the next begins, so a filename that smuggles in
+ * `; rm -rf ~` would show up here as an extra recorded command.
+ */
+function runRollback(rollbackStrategy: string): Array<{ cmd: string; args: string[] }> {
+  const match = /run: (.*)\. Then re-run/s.exec(rollbackStrategy);
+  if (match === null) {
+    throw new Error(`no command list in rollback strategy: ${rollbackStrategy}`);
+  }
+
+  const record = (name: string): string =>
+    `${name}() { printf '${name}\\0'; for a in "$@"; do printf '%s\\0' "$a"; done; printf '\\036'; }`;
+  const out = execFileSync(
+    '/bin/sh',
+    ['-c', `${record('git')}\n${record('rm')}\n${match[1]}`],
+    { encoding: 'utf8' },
+  );
+
+  return out
+    .split('\x1e')
+    .filter((invocation) => invocation.length > 0)
+    .map((invocation) => {
+      const parts = invocation.split('\0').slice(0, -1);
+      return { cmd: parts[0] ?? '', args: parts.slice(1) };
+    });
+}
+
 describe('generateExecutionPlan rollback strategy', () => {
   it('scopes rollback to the plan files and never restores the whole tree', () => {
     const plan = generateOrThrow({
@@ -150,25 +195,134 @@ describe('generateExecutionPlan rollback strategy', () => {
     expect(rollbackStrategy).not.toContain('git restore .');
     expect(rollbackStrategy).not.toMatch(/git\s+(restore|checkout)\s+[.*]/);
 
-    // Every path the strategy names is quoted, so the quoted tokens are
-    // exactly the files this plan is allowed to touch.
-    const named = [...rollbackStrategy.matchAll(/'([^']+)'/g)].map((m) => m[1]);
-    const planFiles = [
-      ...plan.filesToModify,
-      ...plan.filesToCreate,
-      ...plan.filesToDelete,
-    ];
-    expect(new Set(named)).toEqual(new Set(planFiles));
-
     for (const file of [...plan.filesToModify, ...plan.filesToDelete]) {
-      expect(rollbackStrategy).toContain(`git restore -- '${file}'`);
+      expect(rollbackStrategy).toContain(`git restore -- ${quote(file)}`);
     }
     for (const file of plan.filesToCreate) {
       // A created file has nothing in HEAD to restore, so it is removed.
-      expect(rollbackStrategy).toContain(`rm -f '${file}'`);
-      expect(rollbackStrategy).not.toContain(`git restore -- '${file}'`);
+      expect(rollbackStrategy).toContain(`rm -f ${quote(file)}`);
+      expect(rollbackStrategy).not.toContain(`git restore -- ${quote(file)}`);
     }
+
+    // One command per plan file and no others: the strategy touches the files
+    // this plan names and nothing else.
+    expect(occurrences(rollbackStrategy, 'git restore')).toBe(
+      plan.filesToModify.length + plan.filesToDelete.length,
+    );
+    expect(occurrences(rollbackStrategy, 'rm -f')).toBe(plan.filesToCreate.length);
     expect(rollbackStrategy).toContain(SAMPLE_REPO_TEST_COMMAND);
+  });
+
+  it('shell-quotes a hostile filename instead of letting it break out', () => {
+    // A legal filename that closes the quote, runs a command and reopens it.
+    const hostile = "pwn'; rm -rf ~; echo '.js";
+    const hostilePath = inSampleRepo(hostile);
+    writeFileSync(hostilePath, 'export const pwn = true;\n');
+
+    const plan = generateOrThrow({ filesToModify: ['src/calculator.js', hostile] });
+
+    const { rollbackStrategy } = plan;
+    expect(plan.filesToModify).toContain(hostilePath);
+    expect(rollbackStrategy).toContain(`git restore -- ${quote(hostilePath)}`);
+
+    // A real shell reads the hostile path as one argument: the injected
+    // `rm -rf ~` stays inert data inside the filename rather than becoming a
+    // command of its own, so only the plan's own two restores ever run.
+    expect(runRollback(rollbackStrategy)).toEqual([
+      { cmd: 'git', args: ['restore', '--', path.join(canonicalSampleRoot, 'src/calculator.js')] },
+      { cmd: 'git', args: ['restore', '--', hostilePath] },
+    ]);
+  });
+
+  it('shell-quotes a created file whose name contains a quote', () => {
+    const hostile = "new'; touch owned; echo '.js";
+
+    const plan = generateOrThrow({
+      filesToModify: [],
+      filesToCreate: [hostile],
+    });
+
+    const expectedPath = path.join(canonicalSampleRoot, hostile);
+    expect(plan.rollbackStrategy).toContain(`rm -f ${quote(expectedPath)}`);
+
+    // The `touch owned` hidden in the filename never runs as a command.
+    expect(runRollback(plan.rollbackStrategy)).toEqual([
+      { cmd: 'rm', args: ['-f', expectedPath] },
+    ]);
+  });
+});
+
+describe('generateExecutionPlan conflicting targets', () => {
+  it('rejects a file listed to both modify and delete', () => {
+    const result = generateExecutionPlan(
+      {
+        ...request,
+        filesToModify: ['src/calculator.js'],
+        filesToDelete: ['src/calculator.js'],
+      },
+      SAMPLE_REPO_ID,
+    );
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe('PLAN_CONFLICTING_FILE');
+    }
+  });
+
+  it('rejects the same file listed twice in one group', () => {
+    const result = generateExecutionPlan(
+      { ...request, filesToModify: ['src/calculator.js', 'src/calculator.js'] },
+      SAMPLE_REPO_ID,
+    );
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe('PLAN_CONFLICTING_FILE');
+    }
+  });
+
+  it('catches a conflict spelled two different ways', () => {
+    const result = generateExecutionPlan(
+      {
+        ...request,
+        filesToModify: ['src/calculator.js'],
+        filesToDelete: ['./src/../src/calculator.js'],
+      },
+      SAMPLE_REPO_ID,
+    );
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe('PLAN_CONFLICTING_FILE');
+    }
+  });
+
+  it('rejects the same file listed twice to create', () => {
+    const result = generateExecutionPlan(
+      { ...request, filesToModify: [], filesToCreate: ['src/new.js', 'src/new.js'] },
+      SAMPLE_REPO_ID,
+    );
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe('PLAN_CONFLICTING_FILE');
+    }
+  });
+
+  it('rejects creating a file the plan also modifies, because it already exists', () => {
+    const result = generateExecutionPlan(
+      {
+        ...request,
+        filesToModify: ['src/calculator.js'],
+        filesToCreate: ['src/calculator.js'],
+      },
+      SAMPLE_REPO_ID,
+    );
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe('PLAN_CREATE_TARGET_EXISTS');
+    }
   });
 });
 
