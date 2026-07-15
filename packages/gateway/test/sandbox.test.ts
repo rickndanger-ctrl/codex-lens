@@ -1,5 +1,12 @@
 import { existsSync } from 'node:fs';
-import { mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -434,6 +441,98 @@ describe('writeFileInSandbox trackability', () => {
         expect(result.error.code).toBe('SANDBOX_WRITE_NOT_TRACKABLE');
       }
       expect(existsSync(path.join(sandbox.root, 'debug.log'))).toBe(false);
+    },
+    TIMEOUT_MS,
+  );
+
+  /**
+   * Ordering is the whole point of these two. Writing the file first makes it
+   * permitted — nothing ignores it yet — and the `.gitignore` that ignores it
+   * arrives only afterwards, which is itself a legitimate change. A permitted
+   * write may not be retroactively hidden by a later one: git's own view of the
+   * tree says it is ignored, so `add -A -N` would drop it from the diff and the
+   * `-x`-less `clean` would let it outlive the rollback.
+   */
+  it(
+    'keeps a permitted write in the diff after a later change ignores it',
+    async () => {
+      const sandbox = await prepare();
+
+      expect(
+        (await writeFileInSandbox(sandbox, 'notes.log', 'permitted\n')).ok,
+      ).toBe(true);
+      // Only now does the path become ignored.
+      expect(
+        (await writeFileInSandbox(sandbox, '.gitignore', '*.log\n')).ok,
+      ).toBe(true);
+
+      const diff = await captureDiff(sandbox);
+      expect(diff.ok).toBe(true);
+      if (diff.ok) {
+        expect(diff.value).toContain('notes.log');
+        expect(diff.value).toContain('+permitted');
+        expect(diff.value).toContain('.gitignore');
+      }
+    },
+    TIMEOUT_MS,
+  );
+
+  it(
+    'rolls back a permitted write that a later change ignores',
+    async () => {
+      const sandbox = await prepare();
+
+      expect(
+        (await writeFileInSandbox(sandbox, 'notes.log', 'permitted\n')).ok,
+      ).toBe(true);
+      expect(
+        (await writeFileInSandbox(sandbox, '.gitignore', '*.log\n')).ok,
+      ).toBe(true);
+
+      // No captureDiff first: rollback must stand on its own, since the
+      // intent-to-add it stages is what would otherwise mask the leak.
+      const restored = await rollback(sandbox);
+      expect(restored.ok).toBe(true);
+
+      expect(existsSync(path.join(sandbox.root, 'notes.log'))).toBe(false);
+      expect(existsSync(path.join(sandbox.root, '.gitignore'))).toBe(false);
+
+      const after = await captureDiff(sandbox);
+      expect(after.ok).toBe(true);
+      if (after.ok) {
+        expect(after.value).toBe('');
+      }
+    },
+    TIMEOUT_MS,
+  );
+
+  /**
+   * The `-x` clean that reaches a retroactively-ignored write must reach only
+   * the paths this module wrote. An ignored build artifact it never touched —
+   * an installed node_modules being the case that matters — is not its to
+   * delete, and a rollback that blew one away would be a nasty surprise.
+   */
+  it(
+    'spares ignored artifacts it did not write when rolling back',
+    async () => {
+      const sandbox = await prepare();
+
+      expect(
+        (await writeFileInSandbox(sandbox, 'notes.log', 'permitted\n')).ok,
+      ).toBe(true);
+      expect(
+        (await writeFileInSandbox(sandbox, '.gitignore', '*.log\nbuilt/\n')).ok,
+      ).toBe(true);
+
+      // Written behind the module's back, the way a build step would.
+      const artifact = path.join(sandbox.root, 'built', 'bundle.js');
+      await mkdir(path.dirname(artifact), { recursive: true });
+      await writeFile(artifact, 'artifact', 'utf8');
+
+      expect((await rollback(sandbox)).ok).toBe(true);
+
+      expect(existsSync(path.join(sandbox.root, 'notes.log'))).toBe(false);
+      expect(await readFile(artifact, 'utf8')).toBe('artifact');
     },
     TIMEOUT_MS,
   );

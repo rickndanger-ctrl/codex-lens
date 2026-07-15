@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { lstatSync, realpathSync } from 'node:fs';
+import { existsSync, lstatSync, realpathSync } from 'node:fs';
 import { cp, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -41,6 +41,20 @@ interface SandboxRecord {
   repoId: string;
   sourceRoot: string;
   baselineCommit: string;
+  /**
+   * Every path `writeFileInSandbox` has permitted, sandbox-relative and
+   * slash-separated for use as a git pathspec.
+   *
+   * `assertTrackable` asks whether a write is visible to git *at the moment it
+   * is made*, but that answer can be revoked afterwards: a later, entirely
+   * legitimate write to `.gitignore` can ignore a file this module already
+   * wrote. From then on `git add -A -N` skips it, so it vanishes from
+   * `captureDiff`, and `git clean -fd` spares it, so it outlives `rollback` —
+   * a permitted change that is neither reviewable nor undoable, which is the
+   * one thing a sandbox may not produce. Naming these paths explicitly is what
+   * keeps them accounted for no matter what the ignore rules later say.
+   */
+  writes: Set<string>;
 }
 
 /**
@@ -339,6 +353,19 @@ async function assertTrackable(
   );
 }
 
+/**
+ * The permitted writes still present on disk. A path this module wrote and a
+ * later change removed needs no accounting: `git add -A` already reports the
+ * deletion of a tracked one, and an untracked one that is gone has nothing to
+ * hide. Filtering also keeps git from failing the whole command on a pathspec
+ * that matches nothing.
+ */
+function existingWrites(root: string, writes: ReadonlySet<string>): string[] {
+  return [...writes].filter((relative) =>
+    existsSync(path.resolve(root, relative)),
+  );
+}
+
 export async function prepareSandbox(
   repoId: string,
 ): Promise<Result<SandboxHandle>> {
@@ -415,10 +442,18 @@ export async function prepareSandbox(
     repoId: repo.value.id,
     sourceRoot,
     baselineCommit: head.value.trim(),
+    writes: new Set(),
   };
   LIVE_SANDBOXES.set(root, record);
 
-  return ok({ root, ...record });
+  // Built field by field rather than spread from the record: the write ledger
+  // is this module's own bookkeeping and stays out of the caller's handle.
+  return ok({
+    root,
+    repoId: record.repoId,
+    sourceRoot: record.sourceRoot,
+    baselineCommit: record.baselineCommit,
+  });
 }
 
 /**
@@ -463,7 +498,7 @@ export async function writeFileInSandbox(
   if (!authentic.ok) {
     return authentic;
   }
-  const { root } = authentic.value;
+  const { root, record } = authentic.value;
 
   const target = path.resolve(root, relPath);
   if (target === root || !isLexicallyWithin(target, root)) {
@@ -533,7 +568,8 @@ export async function writeFileInSandbox(
     );
   }
 
-  const trackable = await assertTrackable(root, targetSegments.join('/'));
+  const gitPath = targetSegments.join('/');
+  const trackable = await assertTrackable(root, gitPath);
   if (!trackable.ok) {
     return trackable;
   }
@@ -557,6 +593,10 @@ export async function writeFileInSandbox(
     return err('SANDBOX_WRITE_FAILED', errorMessage(error));
   }
 
+  // Recorded only once the write is on disk, so the ledger names files that
+  // exist rather than ones an error left uncreated.
+  record.writes.add(gitPath);
+
   return ok(target);
 }
 
@@ -564,6 +604,11 @@ export async function writeFileInSandbox(
  * Unified diff of every change made since `prepareSandbox`. Untracked files are
  * staged as intent-to-add first so new files appear in the diff; that only
  * touches the index, and `rollback` discards it either way.
+ *
+ * The plain `add -A -N` obeys the sandbox's current ignore rules, which is
+ * wrong for a file this module already wrote and a later `.gitignore` change
+ * has since ignored: that change was permitted, so it must be reviewable. The
+ * ledger is force-added afterwards to put those paths back in the diff.
  */
 export async function captureDiff(
   sandbox: SandboxHandle,
@@ -584,15 +629,27 @@ export async function captureDiff(
     return intentToAdd;
   }
 
+  const permitted = existingWrites(root, record.writes);
+  if (permitted.length > 0) {
+    const forced = await runGit(['add', '-N', '-f', '--', ...permitted], root);
+    if (!forced.ok) {
+      return forced;
+    }
+  }
+
   return runGit(['diff', baseline.value], root);
 }
 
 /**
  * Restores the sandbox to its baseline: tracked files are reset and untracked
  * files removed. `git clean` deliberately omits `-x`, so ignored artifacts such
- * as an installed node_modules survive a rollback. Nothing this module writes
- * can hide there: `writeFileInSandbox` refuses an ignored target that the
- * baseline does not already track.
+ * as an installed node_modules survive a rollback.
+ *
+ * That exemption must not extend to anything this module wrote.
+ * `writeFileInSandbox` refuses a target the sandbox ignores at write time, but
+ * a later `.gitignore` change can ignore a file it already permitted, and the
+ * `-x`-less clean would then spare it. So the ledger is cleaned a second time
+ * by name, with `-x`, which reaches those paths and only those paths.
  */
 export async function rollback(sandbox: SandboxHandle): Promise<Result<void>> {
   const authentic = authenticate(sandbox);
@@ -615,6 +672,22 @@ export async function rollback(sandbox: SandboxHandle): Promise<Result<void>> {
   if (!clean.ok) {
     return clean;
   }
+
+  // Whatever the reset restored is tracked again and `clean` leaves it alone,
+  // so this only reaches permitted writes the baseline does not contain.
+  const permitted = existingWrites(root, record.writes);
+  if (permitted.length > 0) {
+    const cleanPermitted = await runGit(
+      ['clean', '-fdx', '--', ...permitted],
+      root,
+    );
+    if (!cleanPermitted.ok) {
+      return cleanPermitted;
+    }
+  }
+
+  // The tree is back at the baseline, so there is nothing left to account for.
+  record.writes.clear();
 
   return ok(undefined);
 }
