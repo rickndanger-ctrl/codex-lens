@@ -177,44 +177,49 @@ function request(
 }
 
 /**
- * Reads an auth report out of an initialize result. Codex states auth either
- * as an explicit `authenticated` flag or as the active `authMethod`; an absent
- * report is left alone, since silence is not evidence of missing credentials.
+ * Reads the auth report from a `getAuthStatus` result, which answers with
+ * `{ authMethod, authToken, requiresOpenaiAuth }`.
+ *
+ * A missing `authMethod` means nobody has logged in. That is only a failure
+ * when the configured provider actually wants OpenAI credentials — a provider
+ * that sets `requiresOpenaiAuth: false` (a local or self-hosted model) is
+ * usable with no login at all.
  */
 function readAuthMethod(
   result: Record<string, unknown>,
 ): Result<string | undefined> {
-  if (result.authenticated === false) {
-    return err(
-      CODEX_AUTH_UNAVAILABLE,
-      'Codex authentication is unavailable: app-server reported no authenticated session',
-    );
-  }
-
   const authMethod = result.authMethod;
-  if (authMethod === null) {
-    return err(
-      CODEX_AUTH_UNAVAILABLE,
-      'Codex authentication is unavailable: app-server reported no active auth method',
-    );
-  }
   if (typeof authMethod === 'string' && authMethod.length > 0) {
     return ok(authMethod);
   }
-  return ok(undefined);
+
+  if (result.requiresOpenaiAuth === false) {
+    return ok(undefined);
+  }
+
+  return err(
+    CODEX_AUTH_UNAVAILABLE,
+    'Codex authentication is unavailable: no auth method is active. Run `codex login`.',
+  );
 }
 
 /**
  * Performs the app-server handshake and confirms Codex is authenticated.
  *
- * Returns the `CODEX_AUTH_UNAVAILABLE` Failed Result when the handshake — or
- * the auth report inside it — says credentials are missing. Callers must not
- * treat that as a transient error: the operator has to run `codex login`.
+ * The handshake itself says nothing about auth: a Codex home with no
+ * credentials still answers `initialize` with a normal result, and only
+ * `getAuthStatus` reports `authMethod: null`. So auth is queried explicitly
+ * rather than inferred from the handshake, which would read as success.
+ *
+ * Returns the `CODEX_AUTH_UNAVAILABLE` Failed Result when Codex has no usable
+ * credentials. Callers must not treat that as a transient error: the operator
+ * has to run `codex login`.
  */
 export async function initialize(
   transport: AppServerHandle,
   options: CodexInitializeOptions = {},
 ): Promise<Result<CodexInitializeResult>> {
+  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const response = await request(
     transport,
     'initialize',
@@ -224,18 +229,13 @@ export async function initialize(
         version: CLIENT_VERSION,
       },
     },
-    options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+    timeoutMs,
   );
   if (!response.ok) {
     return response;
   }
 
-  const authMethod = readAuthMethod(response.value);
-  if (!authMethod.ok) {
-    return authMethod;
-  }
-
-  // The app-server only accepts thread calls once the handshake is
+  // The app-server only accepts further calls once the handshake is
   // acknowledged. Nothing answers this notification, so the send itself is the
   // only place a failure can be observed.
   try {
@@ -247,6 +247,16 @@ export async function initialize(
     );
   }
 
+  const status = await request(transport, 'getAuthStatus', {}, timeoutMs);
+  if (!status.ok) {
+    return status;
+  }
+
+  const authMethod = readAuthMethod(status.value);
+  if (!authMethod.ok) {
+    return authMethod;
+  }
+
   const userAgent = response.value.userAgent;
   return ok({
     ...(typeof userAgent === 'string' ? { userAgent } : {}),
@@ -254,11 +264,17 @@ export async function initialize(
   });
 }
 
+/**
+ * Both `thread/start` and `thread/resume` answer with the thread object nested
+ * under `result.thread`, carrying its id as `thread.id` — there is no
+ * top-level `threadId` on the response.
+ */
 function readThread(
   method: string,
   result: Record<string, unknown>,
 ): Result<CodexThread> {
-  const threadId = result.threadId;
+  const thread = result.thread;
+  const threadId = isRecord(thread) ? thread.id : undefined;
   if (typeof threadId !== 'string' || threadId.length === 0) {
     return err(
       'CODEX_PROTOCOL_ERROR',

@@ -72,23 +72,56 @@ function createFakeTransport(
   };
 }
 
+const THREAD_ID = '019f63c2-8b22-7613-89ce-023b27e0be00';
+
+/**
+ * The canned frames below mirror what a real `codex app-server` 0.144 answers,
+ * trimmed to the fields this client reads. Note that `initialize` carries no
+ * auth information at all — that only comes back from `getAuthStatus`.
+ */
 const okInit = (request: AppServerMessage): AppServerMessage => ({
   jsonrpc: '2.0',
   id: request.id,
-  result: { userAgent: 'codex/1.4.0 (app-server)', authMethod: 'chatgpt' },
+  result: {
+    userAgent: 'codex/0.144.2 (app-server)',
+    codexHome: '/home/dev/.codex',
+    platformOs: 'macos',
+  },
+});
+
+const okAuthStatus = (request: AppServerMessage): AppServerMessage => ({
+  jsonrpc: '2.0',
+  id: request.id,
+  result: { authMethod: 'chatgpt', authToken: null, requiresOpenaiAuth: true },
+});
+
+/** A Codex home nobody has logged into: initialize succeeds, auth is absent. */
+const loggedOutAuthStatus = (request: AppServerMessage): AppServerMessage => ({
+  jsonrpc: '2.0',
+  id: request.id,
+  result: { authMethod: null, authToken: null, requiresOpenaiAuth: true },
+});
+
+const thread = (id: string): Record<string, unknown> => ({
+  id,
+  sessionId: id,
+  status: { type: 'idle' },
+  turns: [],
 });
 
 const okStart = (request: AppServerMessage): AppServerMessage => ({
   jsonrpc: '2.0',
   id: request.id,
-  result: { threadId: 'thread_01H8XYZ' },
+  result: { thread: thread(THREAD_ID), model: 'gpt-5.6-sol', cwd: '/repo' },
 });
 
 const okResume = (request: AppServerMessage): AppServerMessage => ({
   jsonrpc: '2.0',
   id: request.id,
   result: {
-    threadId: String((request.params as { threadId?: unknown }).threadId),
+    thread: thread(String((request.params as { threadId?: unknown }).threadId)),
+    model: 'gpt-5.6-sol',
+    initialTurnsPage: { items: [] },
   },
 });
 
@@ -103,13 +136,16 @@ const authError = (request: AppServerMessage): AppServerMessage => ({
 
 describe('initialize', () => {
   it('handshakes and reports the active auth method', async () => {
-    const transport = createFakeTransport({ initialize: okInit });
+    const transport = createFakeTransport({
+      initialize: okInit,
+      getAuthStatus: okAuthStatus,
+    });
 
     const result = await initialize(transport);
 
     expect(result).toEqual({
       ok: true,
-      value: { userAgent: 'codex/1.4.0 (app-server)', authMethod: 'chatgpt' },
+      value: { userAgent: 'codex/0.144.2 (app-server)', authMethod: 'chatgpt' },
     });
     expect(transport.sent[0]).toMatchObject({
       jsonrpc: '2.0',
@@ -119,11 +155,19 @@ describe('initialize', () => {
     expect(transport.sent[0]?.id).toEqual(expect.any(Number));
   });
 
-  it('acknowledges the handshake with an initialized notification', async () => {
-    const transport = createFakeTransport({ initialize: okInit });
+  it('acknowledges the handshake, then asks for auth status', async () => {
+    const transport = createFakeTransport({
+      initialize: okInit,
+      getAuthStatus: okAuthStatus,
+    });
 
     await initialize(transport);
 
+    expect(transport.sent.map((message) => message.method)).toEqual([
+      'initialize',
+      'initialized',
+      'getAuthStatus',
+    ]);
     expect(transport.sent[1]).toEqual({
       jsonrpc: '2.0',
       method: 'initialized',
@@ -143,16 +187,36 @@ describe('initialize', () => {
         message: expect.stringContaining('codex login'),
       },
     });
-    // Never acknowledge a handshake that did not establish auth.
+    // A rejected handshake is never acknowledged.
     expect(transport.sent).toHaveLength(1);
   });
 
-  it('fails with the auth code when the result reports no active auth method', async () => {
+  it('fails with the auth code when a clean Codex home reports no auth method', async () => {
+    // The real trap: initialize succeeds and says nothing about auth, so only
+    // the explicit status query can tell nobody has logged in.
     const transport = createFakeTransport({
-      initialize: (request) => ({
+      initialize: okInit,
+      getAuthStatus: loggedOutAuthStatus,
+    });
+
+    const result = await initialize(transport);
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        code: CODEX_AUTH_UNAVAILABLE,
+        message: expect.stringContaining('codex login'),
+      },
+    });
+  });
+
+  it('fails with the auth code when auth status omits the auth method entirely', async () => {
+    const transport = createFakeTransport({
+      initialize: okInit,
+      getAuthStatus: (request) => ({
         jsonrpc: '2.0',
         id: request.id,
-        result: { userAgent: 'codex/1.4.0', authMethod: null },
+        result: { requiresOpenaiAuth: true },
       }),
     });
 
@@ -164,13 +228,28 @@ describe('initialize', () => {
     });
   });
 
-  it('fails with the auth code when the result reports an unauthenticated session', async () => {
+  it('succeeds without a login when the provider needs no OpenAI auth', async () => {
     const transport = createFakeTransport({
-      initialize: (request) => ({
+      initialize: okInit,
+      getAuthStatus: (request) => ({
         jsonrpc: '2.0',
         id: request.id,
-        result: { authenticated: false },
+        result: { authMethod: null, requiresOpenaiAuth: false },
       }),
+    });
+
+    const result = await initialize(transport);
+
+    expect(result).toEqual({
+      ok: true,
+      value: { userAgent: 'codex/0.144.2 (app-server)' },
+    });
+  });
+
+  it('fails with the auth code when the status query is rejected for auth', async () => {
+    const transport = createFakeTransport({
+      initialize: okInit,
+      getAuthStatus: authError,
     });
 
     const result = await initialize(transport);
@@ -220,12 +299,12 @@ describe('initialize', () => {
 });
 
 describe('createThread', () => {
-  it('starts a thread and returns its id', async () => {
+  it('starts a thread and returns the id nested under result.thread', async () => {
     const transport = createFakeTransport({ 'thread/start': okStart });
 
     const result = await createThread(transport);
 
-    expect(result).toEqual({ ok: true, value: { threadId: 'thread_01H8XYZ' } });
+    expect(result).toEqual({ ok: true, value: { threadId: THREAD_ID } });
     expect(transport.sent[0]).toMatchObject({
       jsonrpc: '2.0',
       method: 'thread/start',
@@ -255,12 +334,29 @@ describe('createThread', () => {
     });
   });
 
-  it('rejects a response with no thread id', async () => {
+  it('rejects a response whose thread carries no id', async () => {
     const transport = createFakeTransport({
       'thread/start': (request) => ({
         jsonrpc: '2.0',
         id: request.id,
         result: { thread: {} },
+      }),
+    });
+
+    const result = await createThread(transport);
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: { code: 'CODEX_PROTOCOL_ERROR' },
+    });
+  });
+
+  it('rejects a legacy flat threadId rather than reading past the thread object', async () => {
+    const transport = createFakeTransport({
+      'thread/start': (request) => ({
+        jsonrpc: '2.0',
+        id: request.id,
+        result: { threadId: THREAD_ID },
       }),
     });
 
@@ -277,20 +373,43 @@ describe('resumeThread', () => {
   it('resumes an existing thread by id', async () => {
     const transport = createFakeTransport({ 'thread/resume': okResume });
 
-    const result = await resumeThread(transport, 'thread_01H8XYZ');
+    const result = await resumeThread(transport, THREAD_ID);
 
-    expect(result).toEqual({ ok: true, value: { threadId: 'thread_01H8XYZ' } });
+    expect(result).toEqual({ ok: true, value: { threadId: THREAD_ID } });
     expect(transport.sent[0]).toMatchObject({
       jsonrpc: '2.0',
       method: 'thread/resume',
-      params: { threadId: 'thread_01H8XYZ' },
+      params: { threadId: THREAD_ID },
+    });
+  });
+
+  it('reports an unknown thread under its own code', async () => {
+    const transport = createFakeTransport({
+      'thread/resume': (request) => ({
+        jsonrpc: '2.0',
+        id: request.id,
+        error: {
+          code: -32600,
+          message: `no rollout found for thread id ${THREAD_ID}`,
+        },
+      }),
+    });
+
+    const result = await resumeThread(transport, THREAD_ID);
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        code: 'CODEX_REQUEST_FAILED',
+        message: expect.stringContaining('no rollout found'),
+      },
     });
   });
 
   it('fails with the auth code rather than fabricating a resume', async () => {
     const transport = createFakeTransport({ 'thread/resume': authError });
 
-    const result = await resumeThread(transport, 'thread_01H8XYZ');
+    const result = await resumeThread(transport, THREAD_ID);
 
     expect(result).toMatchObject({
       ok: false,
@@ -320,7 +439,7 @@ describe('request handling', () => {
           transport.emit({
             jsonrpc: '2.0',
             id: 9999,
-            result: { threadId: 'x' },
+            result: { thread: thread('someone-elses-thread') },
           });
         });
         return okStart(request);
@@ -329,7 +448,7 @@ describe('request handling', () => {
 
     const result = await createThread(transport);
 
-    expect(result).toEqual({ ok: true, value: { threadId: 'thread_01H8XYZ' } });
+    expect(result).toEqual({ ok: true, value: { threadId: THREAD_ID } });
   });
 
   it('uses a distinct request id per call', async () => {
