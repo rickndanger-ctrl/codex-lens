@@ -9,17 +9,32 @@ export function canonicalizePath(candidatePath: string): string {
   return realpathSync.native(path.resolve(candidatePath));
 }
 
+/**
+ * Containment check that never touches the filesystem. Both arguments must
+ * already be canonical: this cannot see through a symlink, so passing it a
+ * raw path proves nothing about where that path really lands. Use it only for
+ * paths that cannot be canonicalized because they do not exist yet, and only
+ * after the nearest existing ancestor has been canonicalized and checked.
+ */
+export function isInsideRootLexically(
+  canonicalCandidate: string,
+  canonicalRoot: string,
+): boolean {
+  const relative = path.relative(canonicalRoot, canonicalCandidate);
+
+  return (
+    relative === '' ||
+    (!relative.startsWith(`..${path.sep}`) &&
+      relative !== '..' &&
+      !path.isAbsolute(relative))
+  );
+}
+
 export function isWithinRoot(candidate: string, root: string): boolean {
   try {
-    const canonicalCandidate = canonicalizePath(candidate);
-    const canonicalRoot = canonicalizePath(root);
-    const relative = path.relative(canonicalRoot, canonicalCandidate);
-
-    return (
-      relative === '' ||
-      (!relative.startsWith(`..${path.sep}`) &&
-        relative !== '..' &&
-        !path.isAbsolute(relative))
+    return isInsideRootLexically(
+      canonicalizePath(candidate),
+      canonicalizePath(root),
     );
   } catch {
     return false;
