@@ -8,9 +8,11 @@ import {
 } from '@codex-lens/shared';
 
 import {
+  validateSandboxWrite,
   writeFileInSandbox,
   type SandboxHandle,
 } from '../sandbox.js';
+import { CODEX_AUTH_UNAVAILABLE, isAuthUnavailable } from './client.js';
 import type { AppServerHandle, AppServerMessage } from './transport.js';
 
 const TURN_TIMEOUT_MS = 30_000;
@@ -108,7 +110,14 @@ async function runTurn(
             typeof message.error.message === 'string'
               ? message.error.message
               : 'Codex rejected the edit turn';
-          settle(err('CODEX_TURN_FAILED', detail));
+          settle(
+            isAuthUnavailable(message.error.code, detail)
+              ? err(
+                  CODEX_AUTH_UNAVAILABLE,
+                  `Codex authentication is unavailable: ${detail}`,
+                )
+              : err('CODEX_TURN_FAILED', detail),
+          );
           return;
         }
         const result = message.result;
@@ -219,9 +228,7 @@ function editsFromItem(item: unknown): Result<PendingEdit[]> {
   if (item.type === 'agentMessage' && typeof item.text === 'string') {
     try {
       const edits = readEdits(parseJson(item.text));
-      return edits === undefined
-        ? err('CODEX_EDIT_INVALID', 'Codex agent message did not contain valid edits')
-        : ok(edits);
+      return edits === undefined ? ok([]) : ok(edits);
     } catch {
       // Progress and commentary agent messages are allowed. A valid structured
       // final message is still required before the turn can succeed.
@@ -314,6 +321,11 @@ export async function applyEdit(
 
   if (edits.size === 0) {
     return err('CODEX_EDIT_MISSING', 'Codex completed the turn without returning any file edits');
+  }
+
+  for (const editPath of edits.keys()) {
+    const validated = await validateSandboxWrite(sandbox, editPath);
+    if (!validated.ok) return validated;
   }
 
   const changedFiles: string[] = [];

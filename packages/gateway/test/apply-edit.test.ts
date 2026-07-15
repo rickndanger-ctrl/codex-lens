@@ -29,6 +29,7 @@ interface ScriptedClient extends AppServerHandle {
 
 function createScriptedClient(
   items: readonly Record<string, unknown>[],
+  turnStartError?: { code: string | number; message: string },
 ): ScriptedClient {
   const listeners = new Set<(message: AppServerMessage) => void>();
   const sent: AppServerMessage[] = [];
@@ -43,6 +44,10 @@ function createScriptedClient(
       if (message.method !== 'turn/start') return;
 
       queueMicrotask(() => {
+        if (turnStartError !== undefined) {
+          emit({ jsonrpc: '2.0', id: message.id, error: turnStartError });
+          return;
+        }
         emit({
           jsonrpc: '2.0',
           id: message.id,
@@ -155,6 +160,43 @@ describe('applyEdit', () => {
   );
 
   it(
+    'ignores JSON-shaped commentary before a valid edits message',
+    async () => {
+      const handle = await sandbox();
+      const client = createScriptedClient([
+        {
+          type: 'agentMessage',
+          id: 'agent-commentary',
+          text: JSON.stringify({ status: 'inspected repository', files: 2 }),
+        },
+        {
+          type: 'agentMessage',
+          id: 'agent-edits',
+          text: JSON.stringify({
+            edits: [
+              {
+                path: 'src/multiply.js',
+                content: 'export const multiply = (a, b) => a * b;\n',
+              },
+            ],
+          }),
+        },
+      ]);
+
+      const result = await applyEdit(client, THREAD_ID, plan(), handle);
+
+      expect(result).toEqual({
+        ok: true,
+        value: { changedFiles: ['src/multiply.js'] },
+      });
+      expect(
+        await readFile(path.join(handle.root, 'src', 'multiply.js'), 'utf8'),
+      ).toContain('multiply');
+    },
+    TIMEOUT_MS,
+  );
+
+  it(
     'materializes a canned write-file tool call through the sandbox helper',
     async () => {
       const handle = await sandbox();
@@ -184,16 +226,23 @@ describe('applyEdit', () => {
   );
 
   it(
-    'rejects an out-of-sandbox edit without creating the escaped file',
+    'rejects an edit batch atomically when a later path escapes the sandbox',
     async () => {
       const handle = await sandbox();
       const escaped = path.resolve(handle.root, '..', 'escaped-by-codex.txt');
+      const valid = path.join(handle.root, 'src', 'multiply.js');
       const client = createScriptedClient([
         {
           type: 'agentMessage',
           id: 'agent-escape',
           text: JSON.stringify({
-            edits: [{ path: '../escaped-by-codex.txt', content: 'pwned\n' }],
+            edits: [
+              {
+                path: 'src/multiply.js',
+                content: 'export const multiply = (a, b) => a * b;\n',
+              },
+              { path: '../escaped-by-codex.txt', content: 'pwned\n' },
+            ],
           }),
         },
       ]);
@@ -205,6 +254,29 @@ describe('applyEdit', () => {
         error: { code: 'SANDBOX_ESCAPE_REJECTED' },
       });
       expect(existsSync(escaped)).toBe(false);
+      expect(existsSync(valid)).toBe(false);
+    },
+    TIMEOUT_MS,
+  );
+
+  it(
+    'classifies turn-start credential failures as auth unavailable',
+    async () => {
+      const handle = await sandbox();
+      const client = createScriptedClient([], {
+        code: 'auth_required',
+        message: 'Login required',
+      });
+
+      const result = await applyEdit(client, THREAD_ID, plan(), handle);
+
+      expect(result).toEqual({
+        ok: false,
+        error: {
+          code: 'CODEX_AUTH_UNAVAILABLE',
+          message: 'Codex authentication is unavailable: Login required',
+        },
+      });
     },
     TIMEOUT_MS,
   );

@@ -73,7 +73,7 @@ function allocateRequestId(): number {
   return lastRequestId;
 }
 
-function isAuthUnavailable(code: unknown, message: string): boolean {
+export function isAuthUnavailable(code: unknown, message: string): boolean {
   const normalized = typeof code === 'string' ? code.toLowerCase() : code;
   if (
     (typeof normalized === 'string' || typeof normalized === 'number') &&

@@ -89,6 +89,7 @@ export {
   CODEX_AUTH_UNAVAILABLE,
   createThread,
   initialize,
+  isAuthUnavailable,
   resumeThread,
 } from './codex/client.js';
 export type {

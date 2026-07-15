@@ -467,8 +467,15 @@ export async function prepareSandbox(
   });
 }
 
+interface PreparedSandboxWrite {
+  root: string;
+  record: SandboxRecord;
+  target: string;
+  gitPath: string;
+}
+
 /**
- * Writes `content` to `relPath` inside the sandbox.
+ * Runs every guard required before a sandbox write may touch disk.
  *
  * Three independent guards must all pass. The physical one keeps the write
  * inside the sandbox root — checked lexically, then again against the resolved
@@ -481,11 +488,10 @@ export async function prepareSandbox(
  * change git cannot see is a change nobody can review or undo, so it is refused
  * rather than made invisibly.
  */
-export async function writeFileInSandbox(
+async function prepareSandboxWrite(
   sandbox: SandboxHandle,
   relPath: string,
-  content: string,
-): Promise<Result<string>> {
+): Promise<Result<PreparedSandboxWrite>> {
   if (typeof relPath !== 'string' || relPath.trim().length === 0) {
     return err(
       'INVALID_SANDBOX_PATH',
@@ -594,6 +600,34 @@ export async function writeFileInSandbox(
   if (!trackable.ok) {
     return trackable;
   }
+
+  return ok({ root, record, target, gitPath });
+}
+
+/**
+ * Validates that `relPath` could be written through `writeFileInSandbox`
+ * without materializing it. Callers that apply a batch can preflight every
+ * path before allowing the first write.
+ */
+export async function validateSandboxWrite(
+  sandbox: SandboxHandle,
+  relPath: string,
+): Promise<Result<void>> {
+  const prepared = await prepareSandboxWrite(sandbox, relPath);
+  return prepared.ok ? ok(undefined) : prepared;
+}
+
+/** Writes `content` to `relPath` inside the sandbox after full validation. */
+export async function writeFileInSandbox(
+  sandbox: SandboxHandle,
+  relPath: string,
+  content: string,
+): Promise<Result<string>> {
+  const prepared = await prepareSandboxWrite(sandbox, relPath);
+  if (!prepared.ok) {
+    return prepared;
+  }
+  const { root, record, target, gitPath } = prepared.value;
 
   try {
     await mkdir(path.dirname(target), { recursive: true });
