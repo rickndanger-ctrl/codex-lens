@@ -98,6 +98,8 @@ export type {
   CodexInitializeResult,
   CodexThread,
 } from './codex/client.js';
+export { applyEdit } from './codex/apply-edit.js';
+export type { AppliedEdit } from './codex/apply-edit.js';
 export { startAppServer } from './codex/transport.js';
 export type {
   AppServerHandle,
