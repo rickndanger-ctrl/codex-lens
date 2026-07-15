@@ -158,6 +158,14 @@ describe('no external network or shell access in gateway source', () => {
     /\brequire\s*\(\s*['"](?:node:)?(?:child_process|net|http|https|dgram|tls)['"]\s*\)/,
   ];
 
+  // The only two modules allowed to start a child process: the Codex
+  // app-server transport and the sandboxed test runner. Both spawn a fixed
+  // command with shell:false. Adding a third entry is a posture change.
+  const SPAWN_ALLOWLIST = new Set([
+    path.join('codex', 'transport.ts'),
+    'test-runner.ts',
+  ]);
+
   it('imports no networking or process-spawning modules', async () => {
     const files = await collectSourceFiles(srcDir);
     expect(files.length).toBeGreaterThan(0);
@@ -165,17 +173,17 @@ describe('no external network or shell access in gateway source', () => {
     for (const file of files) {
       const source = await readFile(file, 'utf8');
       const relative = path.relative(srcDir, file);
-      const isCodexTransport = relative === path.join('codex', 'transport.ts');
+      const maySpawn = SPAWN_ALLOWLIST.has(relative);
       expect(
         FORBIDDEN_NETWORK_IMPORT.test(source),
         `forbidden network import in ${relative}`,
       ).toBe(false);
       expect(
-        CHILD_PROCESS_IMPORT.test(source) && !isCodexTransport,
+        CHILD_PROCESS_IMPORT.test(source) && !maySpawn,
         `forbidden child-process import in ${relative}`,
       ).toBe(false);
       expect(
-        PROCESS_SPAWN_CALL.test(source) && !isCodexTransport,
+        PROCESS_SPAWN_CALL.test(source) && !maySpawn,
         `forbidden spawn call in ${relative}`,
       ).toBe(false);
       for (const pattern of FORBIDDEN_CALLS) {

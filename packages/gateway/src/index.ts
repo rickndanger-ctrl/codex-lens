@@ -77,6 +77,8 @@ export {
 export type { CreateTaskInput, Task, TaskState } from './tasks/index.js';
 export { runMockTask } from './runner/index.js';
 export type { MockRunOptions, MockRunResult } from './runner/index.js';
+export { runTests } from './test-runner.js';
+export type { Sandbox, TestCounts, TestRun } from './test-runner.js';
 export { startAppServer } from './codex/transport.js';
 export type {
   AppServerHandle,
