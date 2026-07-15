@@ -181,12 +181,23 @@ function spawnGit(
   env.GIT_OPTIONAL_LOCKS = '0';
 
   return new Promise((resolve) => {
-    const child = spawn('git', [...args], {
-      cwd,
-      env,
-      shell: false,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
+    // `spawn` reports most failures through the `error` event, but rejects an
+    // argument it cannot pass to the OS at all — an embedded NUL being the one
+    // that reaches here — by throwing on the spot. Inside this executor that
+    // becomes a rejected promise, which every caller `await`s expecting a
+    // Result. Caught so a bad argument is an error value like any other.
+    let child;
+    try {
+      child = spawn('git', [...args], {
+        cwd,
+        env,
+        shell: false,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+    } catch (error) {
+      resolve(err('GIT_COMMAND_FAILED', errorMessage(error)));
+      return;
+    }
 
     const stdout: string[] = [];
     const stderr: string[] = [];
@@ -491,6 +502,16 @@ export async function writeFileInSandbox(
     return err(
       'SANDBOX_ESCAPE_REJECTED',
       `Sandbox-relative path must not contain "..": "${relPath}"`,
+    );
+  }
+  // A NUL survives every check below it — it is not a separator, not "..", and
+  // resolves like any other character — but no syscall or git argv can carry
+  // one. Left alone it reaches `spawn`, which throws where a caller is entitled
+  // to a Result. Refused here so the answer is an error, not an exception.
+  if (relPath.includes('\0')) {
+    return err(
+      'INVALID_SANDBOX_PATH',
+      'Sandbox-relative path must not contain a NUL character',
     );
   }
 

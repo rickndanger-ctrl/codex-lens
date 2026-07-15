@@ -744,6 +744,59 @@ describe('writeFileInSandbox containment', () => {
     },
     TIMEOUT_MS,
   );
+
+  /**
+   * A NUL is the one character that no syscall and no git argv can carry, and
+   * it slips past every check phrased in terms of separators or "..". Reaching
+   * `spawn` with one throws synchronously — not via the `error` event — so an
+   * unguarded path turns a caller's `await` into an exception where the whole
+   * module's contract is a Result. These pin the answer as a rejected value.
+   */
+  it.each([
+    ['a trailing NUL', 'notes.txt\0'],
+    ['a NUL before a path suffix', 'notes.txt\0.md'],
+    ['a NUL in a directory segment', `src\0${path.sep}mod.js`],
+  ])(
+    'resolves to an error rather than throwing for %s',
+    async (_label, relPath) => {
+      const sandbox = await prepare();
+
+      // `resolves` rather than a bare `await`: an unguarded NUL *rejects* the
+      // promise, and that rejection is the regression itself, so the assertion
+      // has to be able to tell it apart from an error Result.
+      await expect(
+        writeFileInSandbox(sandbox, relPath, 'pwned'),
+      ).resolves.toMatchObject({ ok: false });
+
+      const settled = await writeFileInSandbox(sandbox, relPath, 'pwned');
+      expect(settled.ok).toBe(false);
+      if (!settled.ok) {
+        expect(settled.error.code).toBe('INVALID_SANDBOX_PATH');
+      }
+      // The truncation a NUL invites: nothing may land under the prefix either.
+      expect(existsSync(path.join(sandbox.root, 'notes.txt'))).toBe(false);
+      expect(existsSync(path.join(sandbox.root, 'src', 'mod.js'))).toBe(false);
+    },
+    TIMEOUT_MS,
+  );
+
+  /**
+   * The rejection above lands before any git runs, so on its own it would leave
+   * `spawnGit`'s own guard unexercised. A NUL in the *content* reaches
+   * `writeFile` but never an argv, so this drives the whole write path — every
+   * git call included — and pins that the ordinary case still resolves.
+   */
+  it(
+    'writes content containing a NUL and still resolves to a Result',
+    async () => {
+      const sandbox = await prepare();
+
+      const result = await writeFileInSandbox(sandbox, 'notes.txt', 'a\0b');
+
+      expect(result.ok).toBe(true);
+    },
+    TIMEOUT_MS,
+  );
 });
 
 describe('writeFileInSandbox editable-target policy', () => {
