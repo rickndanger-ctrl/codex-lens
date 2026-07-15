@@ -79,6 +79,19 @@ export { runMockTask } from './runner/index.js';
 export type { MockRunOptions, MockRunResult } from './runner/index.js';
 export { runTests } from './test-runner.js';
 export type { Sandbox, TestCounts, TestRun } from './test-runner.js';
+export {
+  CODEX_AUTH_UNAVAILABLE,
+  createThread,
+  initialize,
+  resumeThread,
+} from './codex/client.js';
+export type {
+  CodexClientOptions,
+  CodexCreateThreadOptions,
+  CodexInitializeOptions,
+  CodexInitializeResult,
+  CodexThread,
+} from './codex/client.js';
 export { startAppServer } from './codex/transport.js';
 export type {
   AppServerHandle,

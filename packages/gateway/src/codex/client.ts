@@ -1,0 +1,311 @@
+import { err, ok, type Result } from '@codex-lens/shared';
+
+import type { AppServerHandle, AppServerMessage } from './transport.js';
+
+/**
+ * Distinct code for "Codex has no usable authentication". Callers surface this
+ * to the operator (who must run `codex login`) rather than retrying it.
+ */
+export const CODEX_AUTH_UNAVAILABLE = 'CODEX_AUTH_UNAVAILABLE';
+
+const DEFAULT_TIMEOUT_MS = 30_000;
+const CLIENT_NAME = '@codex-lens/gateway';
+const CLIENT_VERSION = '0.0.0';
+
+export interface CodexClientOptions {
+  /** Wall-clock budget for a single request. Defaults to 30 seconds. */
+  timeoutMs?: number;
+}
+
+export interface CodexInitializeOptions extends CodexClientOptions {
+  clientInfo?: { name: string; version: string };
+}
+
+export interface CodexCreateThreadOptions extends CodexClientOptions {
+  /** Working directory the thread's turns run in. */
+  cwd?: string;
+  model?: string;
+}
+
+export interface CodexInitializeResult {
+  /** Agent string the app-server reports, when it sends one. */
+  userAgent?: string;
+  /** Auth method Codex reports as active, e.g. `chatgpt` or `apikey`. */
+  authMethod?: string;
+}
+
+export interface CodexThread {
+  threadId: string;
+}
+
+/**
+ * Error codes Codex uses for "there are no credentials". Matched
+ * case-insensitively; numeric codes are compared as-is.
+ */
+const AUTH_ERROR_CODES = new Set<string | number>([
+  'auth_required',
+  'auth_unavailable',
+  'not_logged_in',
+  'unauthenticated',
+  401,
+]);
+
+/**
+ * Codex reports missing auth as free text on some paths, so the code check is
+ * backed by a message probe. Deliberately narrow: a false positive here would
+ * mislabel an unrelated failure as an auth problem.
+ */
+const AUTH_MESSAGE_PATTERN =
+  /\bnot (?:logged in|authenticated|signed in)\b|\bauth(?:entication)? (?:is )?(?:required|unavailable|missing|expired)\b|\blogin required\b|\bmissing credentials\b/i;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+let lastRequestId = 0;
+
+function allocateRequestId(): number {
+  lastRequestId += 1;
+  return lastRequestId;
+}
+
+function isAuthUnavailable(code: unknown, message: string): boolean {
+  const normalized = typeof code === 'string' ? code.toLowerCase() : code;
+  if (
+    (typeof normalized === 'string' || typeof normalized === 'number') &&
+    AUTH_ERROR_CODES.has(normalized)
+  ) {
+    return true;
+  }
+  return AUTH_MESSAGE_PATTERN.test(message);
+}
+
+function toResult(
+  method: string,
+  message: AppServerMessage,
+): Result<Record<string, unknown>> {
+  const failure = message.error;
+  if (isRecord(failure)) {
+    const detail =
+      typeof failure.message === 'string' && failure.message.length > 0
+        ? failure.message
+        : `Codex app-server rejected "${method}"`;
+    if (isAuthUnavailable(failure.code, detail)) {
+      return err(
+        CODEX_AUTH_UNAVAILABLE,
+        `Codex authentication is unavailable: ${detail}`,
+      );
+    }
+    return err(
+      'CODEX_REQUEST_FAILED',
+      `Codex app-server rejected "${method}": ${detail}`,
+    );
+  }
+
+  const result = message.result;
+  if (!isRecord(result)) {
+    return err(
+      'CODEX_PROTOCOL_ERROR',
+      `Codex app-server answered "${method}" without a result object`,
+    );
+  }
+  return ok(result);
+}
+
+/**
+ * Sends one JSON-RPC request and resolves with its answer. Unrelated traffic
+ * (notifications, other requests' responses) is ignored by matching on the
+ * request id, and every failure mode — rejection, malformed answer, dead
+ * transport, silence — comes back as a Failed Result rather than a throw.
+ */
+function request(
+  transport: AppServerHandle,
+  method: string,
+  params: Record<string, unknown>,
+  timeoutMs: number,
+): Promise<Result<Record<string, unknown>>> {
+  const id = allocateRequestId();
+
+  return new Promise((resolve) => {
+    let settled = false;
+
+    // `timer` and `unsubscribe` are declared below; settle only ever runs from
+    // a later tick, once both exist.
+    const settle = (result: Result<Record<string, unknown>>): void => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timer);
+      unsubscribe();
+      resolve(result);
+    };
+
+    const timer = setTimeout(() => {
+      settle(
+        err(
+          'CODEX_REQUEST_TIMED_OUT',
+          `Codex app-server did not answer "${method}" within ${timeoutMs}ms`,
+        ),
+      );
+    }, timeoutMs);
+    timer.unref();
+
+    // Subscribed before the send so a response cannot land unobserved.
+    const unsubscribe = transport.onMessage((message) => {
+      if (message.id !== id) {
+        return;
+      }
+      settle(toResult(method, message));
+    });
+
+    transport
+      .send({ jsonrpc: '2.0', id, method, params })
+      .catch((error: unknown) => {
+        settle(
+          err(
+            'CODEX_TRANSPORT_FAILED',
+            `Could not send "${method}" to Codex app-server: ${errorMessage(error)}`,
+          ),
+        );
+      });
+  });
+}
+
+/**
+ * Reads an auth report out of an initialize result. Codex states auth either
+ * as an explicit `authenticated` flag or as the active `authMethod`; an absent
+ * report is left alone, since silence is not evidence of missing credentials.
+ */
+function readAuthMethod(
+  result: Record<string, unknown>,
+): Result<string | undefined> {
+  if (result.authenticated === false) {
+    return err(
+      CODEX_AUTH_UNAVAILABLE,
+      'Codex authentication is unavailable: app-server reported no authenticated session',
+    );
+  }
+
+  const authMethod = result.authMethod;
+  if (authMethod === null) {
+    return err(
+      CODEX_AUTH_UNAVAILABLE,
+      'Codex authentication is unavailable: app-server reported no active auth method',
+    );
+  }
+  if (typeof authMethod === 'string' && authMethod.length > 0) {
+    return ok(authMethod);
+  }
+  return ok(undefined);
+}
+
+/**
+ * Performs the app-server handshake and confirms Codex is authenticated.
+ *
+ * Returns the `CODEX_AUTH_UNAVAILABLE` Failed Result when the handshake — or
+ * the auth report inside it — says credentials are missing. Callers must not
+ * treat that as a transient error: the operator has to run `codex login`.
+ */
+export async function initialize(
+  transport: AppServerHandle,
+  options: CodexInitializeOptions = {},
+): Promise<Result<CodexInitializeResult>> {
+  const response = await request(
+    transport,
+    'initialize',
+    {
+      clientInfo: options.clientInfo ?? {
+        name: CLIENT_NAME,
+        version: CLIENT_VERSION,
+      },
+    },
+    options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+  );
+  if (!response.ok) {
+    return response;
+  }
+
+  const authMethod = readAuthMethod(response.value);
+  if (!authMethod.ok) {
+    return authMethod;
+  }
+
+  // The app-server only accepts thread calls once the handshake is
+  // acknowledged. Nothing answers this notification, so the send itself is the
+  // only place a failure can be observed.
+  try {
+    await transport.send({ jsonrpc: '2.0', method: 'initialized', params: {} });
+  } catch (error) {
+    return err(
+      'CODEX_TRANSPORT_FAILED',
+      `Could not acknowledge the Codex handshake: ${errorMessage(error)}`,
+    );
+  }
+
+  const userAgent = response.value.userAgent;
+  return ok({
+    ...(typeof userAgent === 'string' ? { userAgent } : {}),
+    ...(authMethod.value === undefined ? {} : { authMethod: authMethod.value }),
+  });
+}
+
+function readThread(
+  method: string,
+  result: Record<string, unknown>,
+): Result<CodexThread> {
+  const threadId = result.threadId;
+  if (typeof threadId !== 'string' || threadId.length === 0) {
+    return err(
+      'CODEX_PROTOCOL_ERROR',
+      `Codex app-server answered "${method}" without a thread id`,
+    );
+  }
+  return ok({ threadId });
+}
+
+/** Starts a new Codex thread and returns its id. */
+export async function createThread(
+  transport: AppServerHandle,
+  options: CodexCreateThreadOptions = {},
+): Promise<Result<CodexThread>> {
+  const response = await request(
+    transport,
+    'thread/start',
+    {
+      ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
+      ...(options.model === undefined ? {} : { model: options.model }),
+    },
+    options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+  );
+  if (!response.ok) {
+    return response;
+  }
+  return readThread('thread/start', response.value);
+}
+
+/** Re-attaches to an existing Codex thread by id. */
+export async function resumeThread(
+  transport: AppServerHandle,
+  threadId: string,
+  options: CodexClientOptions = {},
+): Promise<Result<CodexThread>> {
+  if (threadId.length === 0) {
+    return err('INVALID_THREAD_ID', 'Thread id must not be empty');
+  }
+
+  const response = await request(
+    transport,
+    'thread/resume',
+    { threadId },
+    options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+  );
+  if (!response.ok) {
+    return response;
+  }
+  return readThread('thread/resume', response.value);
+}
