@@ -85,6 +85,13 @@ export {
 export type { ExecutionPlanRequest } from './plan-generation.js';
 export { runTests } from './test-runner.js';
 export type { Sandbox, TestCounts, TestRun } from './test-runner.js';
+export { runVerticalSlice } from './orchestrator.js';
+export type {
+  ExecutionApproval,
+  ExecutionApprovalIssuer,
+  VerticalSliceOptions,
+  VerticalSliceReport,
+} from './orchestrator.js';
 export {
   CODEX_AUTH_UNAVAILABLE,
   createThread,
