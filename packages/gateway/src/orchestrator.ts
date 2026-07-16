@@ -33,6 +33,16 @@ import { runTests, type TestRun } from './test-runner.js';
  * with a contract bound to it, or `undefined` for "not approved". Whatever it
  * returns still faces the same binding check as a caller-supplied contract, so
  * an issuer is a way to be asked, not a way to self-authorize.
+ *
+ * The plan an issuer is handed is a frozen deep copy, not the plan that runs.
+ * The threat is an issuer that approves the plan it is shown and then edits
+ * that object into another one — widening `expectedCommands` or the file lists
+ * after the digest it signed was read, since the binding check compares the
+ * digest field rather than recomputing it. `createExecutionPlan` already
+ * returns a frozen plan, so today the attempt throws either way; handing over a
+ * copy and freezing it here is what stops that from being a property this
+ * module merely inherits from a schema in another package and would lose
+ * silently if that schema ever dropped `.readonly()`.
  */
 export type ExecutionApprovalIssuer = (
   plan: ExecutionPlan,
@@ -138,6 +148,40 @@ function errorMessage(error: unknown): string {
 }
 
 /**
+ * Freezes `value` and everything reachable from it. `Object.freeze` alone is
+ * shallow, which on a plan would freeze the record while leaving
+ * `expectedCommands` and the file lists writable — the arrays being exactly
+ * what an approval binds.
+ *
+ * An already-frozen object is still descended into rather than skipped: frozen
+ * says nothing about what it holds, so treating it as done is how a shallow
+ * freeze upstream would pass for a deep one here. `seen` is what ends the walk.
+ */
+function deepFreeze<T>(value: T, seen = new WeakSet<object>()): T {
+  if (typeof value !== 'object' || value === null || seen.has(value)) {
+    return value;
+  }
+  seen.add(value);
+  Object.freeze(value);
+  for (const nested of Object.values(value)) {
+    deepFreeze(nested, seen);
+  }
+  return value;
+}
+
+/**
+ * The plan as an issuer sees it: a deep copy, frozen. Copying is what keeps the
+ * executed plan out of the issuer's reach; freezing is what makes an attempt to
+ * rewrite it fail loudly rather than pass silently. Modules are strict, so
+ * writing to it throws, and `resolveApproval` turns that into an unavailable
+ * approval — a plan an issuer tried to rewrite is not one this run will carry
+ * out on the strength of the digest it signed first.
+ */
+function issuerSnapshot(plan: ExecutionPlan): ExecutionPlan {
+  return deepFreeze(structuredClone(plan)) as ExecutionPlan;
+}
+
+/**
  * Reduces the two approval shapes to one contract, without judging it: every
  * answer here still goes through `assertExecutionApproved`.
  */
@@ -155,10 +199,12 @@ async function resolveApproval(
   if (typeof approval === 'function') {
     let issued: ApprovalContract | undefined;
     try {
-      issued = await approval(plan);
+      issued = await approval(issuerSnapshot(plan));
     } catch (error) {
       // A throwing issuer is an approval that could not be obtained, not an
       // approval that was granted. It stops the run like any other refusal.
+      // An issuer that throws by trying to rewrite the plan it was shown ends
+      // up here too, which is the answer that suits it: no approval, no edit.
       return err(
         'EXECUTION_APPROVAL_UNAVAILABLE',
         `The approval issuer failed: ${errorMessage(error)}`,
@@ -297,7 +343,10 @@ export async function runVerticalSlice(
   if (!planned.ok) {
     return planned;
   }
-  const plan = planned.value;
+  // Frozen before anyone outside this function can see it: what the approval is
+  // checked against, what Codex is told to implement, and what the tests are
+  // held to is one object nobody can rewrite between those steps.
+  const plan = deepFreeze(planned.value);
 
   const contract = await resolveApproval(options.approval, plan);
   if (!contract.ok) {
