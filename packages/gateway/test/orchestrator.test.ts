@@ -16,6 +16,7 @@ import type {
   AppServerMessage,
 } from '../src/codex/transport.js';
 import {
+  PLAN_DELETIONS_UNSUPPORTED,
   readSandboxCleanupFailure,
   runVerticalSlice,
   SANDBOX_CLEANUP_FAILED,
@@ -40,13 +41,22 @@ const DISPOSE_ERROR = {
  */
 const failing = vi.hoisted(() => ({ rollback: false, dispose: false }));
 
+/** How many working copies the run under test asked for. */
+const prepared = vi.hoisted(() => ({ count: 0 }));
+
 // Cleanup failing is the one thing a sandbox cannot be talked into: a real
 // `rm` refuses to fail on a directory this process owns. Injected here so the
-// orchestrator's answer to it can be tested at all.
+// orchestrator's answer to it can be tested at all. `prepareSandbox` is passed
+// straight through and only counted, so "no sandbox was created" is a claim a
+// test can check rather than infer.
 vi.mock('../src/sandbox.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../src/sandbox.js')>();
   return {
     ...actual,
+    prepareSandbox: async (repoId: string) => {
+      prepared.count += 1;
+      return actual.prepareSandbox(repoId);
+    },
     rollback: async (handle: SandboxHandle) =>
       failing.rollback ? { ok: false, error: ROLLBACK_ERROR } : actual.rollback(handle),
     disposeSandbox: async (handle: SandboxHandle) =>
@@ -59,6 +69,8 @@ const THREAD_ID = '019f63c2-8b22-7613-89ce-023b27e0be10';
 const TURN_ID = '019f63c2-8b22-7613-89ce-023b27e0be11';
 
 const CALCULATOR = 'src/calculator.js';
+/** A file no plan in this suite names, and that no run may therefore write. */
+const UNAPPROVED = 'src/unapproved.js';
 const FIXED_CALCULATOR = `export function add(left, right) {
   return left + right;
 }
@@ -220,6 +232,7 @@ afterEach(async () => {
   // Flags first: a sandbox a test made undisposable must still be removed here.
   failing.rollback = false;
   failing.dispose = false;
+  prepared.count = 0;
   await Promise.all([...live].map(async (handle) => disposeSandbox(handle)));
   live.clear();
 });
@@ -459,6 +472,92 @@ describe('runVerticalSlice', () => {
       expect(Object.isFrozen(report.plan)).toBe(true);
       expect(Object.isFrozen(report.plan.expectedCommands)).toBe(true);
       expect(Object.isFrozen(report.plan.filesToModify)).toBe(true);
+    },
+    TIMEOUT_MS,
+  );
+
+  it(
+    'writes nothing when Codex edits a file the approved plan does not name',
+    async () => {
+      const before = await readFixture();
+      // Disposal is blocked so the sandbox survives the failed run and can be
+      // examined: the claim under test is about what is on disk, so the disk
+      // has to still be there to look at.
+      failing.dispose = true;
+      const client = createFakeClient({
+        edits: [
+          // In scope, and would pass on its own.
+          { path: CALCULATOR, content: FIXED_CALCULATOR },
+          // Never named by the plan, so never seen by the reviewer who approved
+          // it. A plausible-looking helper is the point: nothing about the
+          // content gives it away, only the fact that the approval omits it.
+          { path: UNAPPROVED, content: 'export const backdoor = () => 1;\n' },
+        ],
+      });
+
+      const result = await runVerticalSlice({
+        request: request(),
+        repoId: SAMPLE_REPO_ID,
+        approval: (plan) => approvalFor(plan),
+        client,
+      });
+
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      const failure = readSandboxCleanupFailure(result.error);
+      expect(failure).toBeDefined();
+      if (failure === undefined) return;
+      live.add(failure.sandbox);
+
+      expect(failure.cause).toMatchObject({ code: 'PLAN_FILE_OUT_OF_SCOPE' });
+      expect(failure.cause.message).toContain(UNAPPROVED);
+
+      // The unapproved file was never created.
+      expect(existsSync(path.join(failure.sandbox.root, UNAPPROVED))).toBe(false);
+      // And the batch was refused whole: the approved edit did not land either,
+      // so the run cannot half-apply a plan by pairing a legitimate edit with a
+      // file nobody approved.
+      expect(
+        await readFile(path.join(failure.sandbox.root, CALCULATOR), 'utf8'),
+      ).toContain('left - right');
+      // The registered repo is untouched, as ever.
+      expect(await readFixture()).toBe(before);
+      expect(existsSync(path.join(SAMPLE_REPO_ROOT, UNAPPROVED))).toBe(false);
+    },
+    TIMEOUT_MS,
+  );
+
+  it(
+    'refuses a plan that names deletions, before any sandbox is made',
+    async () => {
+      const before = await readFixture();
+      const client = createFakeClient({
+        edits: [{ path: CALCULATOR, content: FIXED_CALCULATOR }],
+      });
+
+      const result = await runVerticalSlice({
+        request: { ...request(), filesToDelete: ['README.md'] },
+        repoId: SAMPLE_REPO_ID,
+        approval: (plan) => approvalFor(plan),
+        client,
+      });
+
+      expect(result).toMatchObject({
+        ok: false,
+        error: { code: PLAN_DELETIONS_UNSUPPORTED },
+      });
+      if (result.ok) return;
+      // The refusal names the file it cannot remove, so the caller can re-plan
+      // rather than guess.
+      expect(result.error.message).toContain('README.md');
+
+      // Refused while refusing is still free: no copy, no Codex traffic. This
+      // is the check that keeps a deletion plan from being reported Complete on
+      // the strength of its writes alone, with the removals quietly skipped.
+      expect(prepared.count).toBe(0);
+      expect(client.methods).toEqual([]);
+      expect(await readFixture()).toBe(before);
+      expect(existsSync(path.join(SAMPLE_REPO_ROOT, 'README.md'))).toBe(true);
     },
     TIMEOUT_MS,
   );

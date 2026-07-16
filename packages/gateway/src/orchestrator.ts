@@ -233,14 +233,29 @@ async function resolveApproval(
 }
 
 /**
- * The steps that can leave changes behind. Split out so every exit from here
- * passes through one cleanup path in `runVerticalSlice`.
+ * Code for a plan this orchestrator will not carry out because it names files
+ * to delete. Deleting is a change `applyEdit` has no way to make — it
+ * materializes full file contents — so a deletion plan would otherwise be
+ * "executed" by writing the files it names and silently skipping the removals,
+ * reporting Complete for a change nobody made. Refusing is the honest answer
+ * until a sandbox delete exists to make it atomically alongside the writes.
  */
-async function editAndVerify(
-  plan: ExecutionPlan,
-  sandbox: SandboxHandle,
-  options: VerticalSliceOptions,
-): Promise<Result<VerticalSliceReport>> {
+export const PLAN_DELETIONS_UNSUPPORTED = 'PLAN_DELETIONS_UNSUPPORTED';
+
+/**
+ * Whether this orchestrator can carry out the plan at all, asked before a
+ * sandbox exists. Both answers here are properties of the plan alone, so
+ * finding them out after copying a repo would only mean a working copy to clean
+ * up for a run that was never going to happen.
+ */
+function assertPlanExecutable(plan: ExecutionPlan): Result<string> {
+  if (plan.filesToDelete.length > 0) {
+    return err(
+      PLAN_DELETIONS_UNSUPPORTED,
+      `The execution plan names ${String(plan.filesToDelete.length)} file(s) to delete, which this orchestrator cannot carry out: ${plan.filesToDelete.join(', ')}. Re-plan the change without deletions.`,
+    );
+  }
+
   const command = plan.expectedCommands[0];
   if (command === undefined) {
     return err(
@@ -249,6 +264,19 @@ async function editAndVerify(
     );
   }
 
+  return ok(command);
+}
+
+/**
+ * The steps that can leave changes behind. Split out so every exit from here
+ * passes through one cleanup path in `runVerticalSlice`.
+ */
+async function editAndVerify(
+  plan: ExecutionPlan,
+  command: string,
+  sandbox: SandboxHandle,
+  options: VerticalSliceOptions,
+): Promise<Result<VerticalSliceReport>> {
   const thread = await createThread(options.client, {
     ...options.codexOptions,
     cwd: sandbox.root,
@@ -318,13 +346,20 @@ async function editAndVerify(
  * The order is the point. The plan is generated first because it is what the
  * approval must name; the approval is checked before anything is copied,
  * started or written, so an unapproved request costs nothing and changes
- * nothing. Auth is proven next, before the sandbox exists: Codex with no
+ * nothing. A plan this orchestrator cannot carry out — one naming deletions,
+ * see `PLAN_DELETIONS_UNSUPPORTED` — is refused next, while refusing is still
+ * free. Auth is proven after that, before the sandbox exists: Codex with no
  * credentials cannot make the edit, and finding that out after the copy would
  * leave a working copy behind for no reason.
  *
  * Every write happens inside a disposable sandbox — the requested repo itself
  * is never touched — and an edit the tests reject is rolled back to its
  * baseline rather than handed back half-applied.
+ *
+ * The approval binds the plan's file lists, so `applyEdit` holds Codex's answer
+ * to them: an edit to a file the plan does not name, or names for a different
+ * purpose, fails the run rather than landing. Approving a plan is what
+ * authorizes the edit, and the plan a reviewer read names the files it touches.
  *
  * A Failed Result means the change was not made. It normally also means nothing
  * was left behind — with one exception it names rather than hides: if the
@@ -357,6 +392,14 @@ export async function runVerticalSlice(
     return approved;
   }
 
+  // After the approval check, not before: a plan this orchestrator cannot carry
+  // out and that nobody approved is refused as unapproved, which is the answer
+  // that matters. Before the sandbox, so an unexecutable plan copies nothing.
+  const command = assertPlanExecutable(plan);
+  if (!command.ok) {
+    return command;
+  }
+
   const session = await initialize(options.client, options.codexOptions);
   if (!session.ok) {
     return session;
@@ -368,7 +411,7 @@ export async function runVerticalSlice(
   }
   const sandbox = prepared.value;
 
-  const report = await editAndVerify(plan, sandbox, options);
+  const report = await editAndVerify(plan, command.value, sandbox, options);
   if (report.ok) {
     return report;
   }

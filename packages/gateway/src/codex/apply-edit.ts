@@ -7,6 +7,7 @@ import {
   type Result,
 } from '@codex-lens/shared';
 
+import { assertEditInScope, resolvePlanScope } from '../plan-scope.js';
 import {
   validateSandboxWrite,
   writeFileInSandbox,
@@ -373,9 +374,24 @@ export async function applyEdit(
     return err('CODEX_EDIT_MISSING', 'Codex completed the turn without returning any file edits');
   }
 
+  // Anchored to the repo the sandbox was prepared from, so the scope comes from
+  // the registry rather than from anything the agent said. A plan and a sandbox
+  // for different repos resolve no paths in common, which refuses every edit
+  // rather than widening any: the failure direction is the safe one.
+  const scope = resolvePlanScope(executionPlan, sandbox.repoId);
+  if (!scope.ok) return scope;
+
+  // Preflight, in full, before the first write: an edit batch lands whole or not
+  // at all, so a path that is out of scope stops the batch rather than being
+  // dropped from a set of writes that otherwise proceed. Sandbox validation runs
+  // first, so a path that both escapes the sandbox and sits outside the plan is
+  // reported as the escape it is.
   for (const editPath of edits.keys()) {
     const validated = await validateSandboxWrite(sandbox, editPath);
     if (!validated.ok) return validated;
+
+    const inScope = assertEditInScope(scope.value, sandbox.root, editPath);
+    if (!inScope.ok) return inScope;
   }
 
   const changedFiles: string[] = [];

@@ -346,6 +346,45 @@ describe('applyEdit', () => {
   );
 
   it(
+    'rejects an edit batch atomically when a path is outside the plan',
+    async () => {
+      const handle = await sandbox();
+      const valid = path.join(handle.root, 'src', 'multiply.js');
+      const client = createScriptedClient([
+        {
+          type: 'agentMessage',
+          id: 'agent-scope',
+          text: JSON.stringify({
+            edits: [
+              {
+                path: 'src/multiply.js',
+                content: 'export const multiply = (a, b) => a * b;\n',
+              },
+              // A legal sandbox path — inside the root, tracked, writable — and
+              // still not one the plan names. Being writable is not the same as
+              // being approved, and this is the difference.
+              { path: 'src/calculator.js', content: 'export const add = () => 0;\n' },
+            ],
+          }),
+        },
+      ]);
+
+      const result = await applyEdit(client, THREAD_ID, plan(), handle);
+
+      expect(result).toMatchObject({
+        ok: false,
+        error: { code: 'PLAN_FILE_OUT_OF_SCOPE' },
+      });
+      // Nothing landed, not even the edit the plan did name.
+      expect(existsSync(valid)).toBe(false);
+      expect(
+        await readFile(path.join(handle.root, 'src', 'calculator.js'), 'utf8'),
+      ).toContain('left - right');
+    },
+    TIMEOUT_MS,
+  );
+
+  it(
     'classifies turn-start credential failures as auth unavailable',
     async () => {
       const handle = await sandbox();
