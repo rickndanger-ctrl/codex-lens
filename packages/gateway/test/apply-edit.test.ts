@@ -197,7 +197,7 @@ describe('applyEdit', () => {
   );
 
   it(
-    'rejects a malformed final edits message without writing an earlier draft',
+    'aborts the whole batch when any edits message is malformed, writing nothing',
     async () => {
       const handle = await sandbox();
       const draftPath = path.join(handle.root, 'src', 'multiply.js');
@@ -231,6 +231,53 @@ describe('applyEdit', () => {
         },
       });
       expect(existsSync(draftPath)).toBe(false);
+    },
+    TIMEOUT_MS,
+  );
+
+  it(
+    'drops a drafted file that the final edits message omits, rather than merging it',
+    async () => {
+      const handle = await sandbox();
+      const retracted = path.join(handle.root, 'src', 'multiply.js');
+      const client = createScriptedClient([
+        {
+          // A complete, valid draft. Nothing here is malformed, so the only
+          // reason it must not land is that the final message supersedes it.
+          type: 'agentMessage',
+          id: 'agent-draft',
+          text: JSON.stringify({
+            edits: [
+              {
+                path: 'src/multiply.js',
+                content: 'export const multiply = (a, b) => a * b;\n',
+              },
+            ],
+          }),
+        },
+        {
+          // The agent reconsidered and dropped src/multiply.js from its final
+          // answer. Merging would resurrect it; replacing must not.
+          type: 'agentMessage',
+          id: 'agent-final',
+          text: JSON.stringify({
+            edits: [
+              { path: 'README.md', content: '# Calculator\n\nNo multiply after all.\n' },
+            ],
+          }),
+        },
+      ]);
+
+      const result = await applyEdit(client, THREAD_ID, plan(), handle);
+
+      expect(result).toEqual({
+        ok: true,
+        value: { changedFiles: ['README.md'] },
+      });
+      expect(await readFile(path.join(handle.root, 'README.md'), 'utf8')).toContain(
+        'No multiply after all.',
+      );
+      expect(existsSync(retracted)).toBe(false);
     },
     TIMEOUT_MS,
   );

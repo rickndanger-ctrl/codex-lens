@@ -52,6 +52,8 @@ function turnInstructions(executionPlan: ExecutionPlan): string {
     'Inspect files as needed, but do not use file-writing tools or shell commands that change files.',
     'Return only JSON in this exact shape: {"edits":[{"path":"repo/relative/path","content":"complete replacement content"}]}.',
     'Every path must be relative to the working directory. Include the complete final UTF-8 content for every created or modified file.',
+    'Your last edits message is the only one that is applied: it replaces every earlier edits message rather than adding to it.',
+    'So the last edits message must list every file you want changed. A file you sent earlier but leave out of that message will not be changed at all.',
     'Execution plan:',
     JSON.stringify(executionPlan),
   ].join('\n');
@@ -229,8 +231,17 @@ function readEdits(value: unknown): PendingEdit[] | undefined {
     : undefined;
 }
 
-function editsFromItem(item: unknown): Result<PendingEdit[]> {
-  if (!isRecord(item)) return ok([]);
+/**
+ * Extracts the edits an item declares.
+ *
+ * `undefined` and `[]` mean different things and must not be collapsed:
+ * `undefined` means the item is not an edits message at all (commentary,
+ * progress, an unrelated tool call), so it leaves any earlier edits standing.
+ * `[]` means the item *is* an edits message that declares no edits, which under
+ * replace semantics supersedes earlier drafts with an empty set.
+ */
+function editsFromItem(item: unknown): Result<PendingEdit[] | undefined> {
+  if (!isRecord(item)) return ok(undefined);
 
   if (item.type === 'agentMessage' && typeof item.text === 'string') {
     try {
@@ -242,18 +253,18 @@ function editsFromItem(item: unknown): Result<PendingEdit[]> {
             'CODEX_EDIT_INVALID',
             'Codex agent message contained an invalid edits payload',
           )
-        : ok([]);
+        : ok(undefined);
     } catch {
       // Progress and commentary agent messages are allowed. A valid structured
       // final message is still required before the turn can succeed.
-      return ok([]);
+      return ok(undefined);
     }
   }
 
   if (item.type === 'dynamicToolCall') {
     const tool = typeof item.tool === 'string' ? item.tool : '';
     if (!/^(?:write_?file(?:_in_sandbox)?|apply_?edit)$/iu.test(tool)) {
-      return ok([]);
+      return ok(undefined);
     }
     let args: unknown = item.arguments;
     if (typeof args === 'string') {
@@ -271,7 +282,7 @@ function editsFromItem(item: unknown): Result<PendingEdit[]> {
       : ok([one]);
   }
 
-  return ok([]);
+  return ok(undefined);
 }
 
 function completedItems(outcome: TurnOutcome, threadId: string): unknown[] {
@@ -301,6 +312,16 @@ function completedItems(outcome: TurnOutcome, threadId: string): unknown[] {
 /**
  * Executes an approved plan on an existing Codex thread, then materializes the
  * returned full-file edits through the sandbox's sole authorized write path.
+ *
+ * Edits use REPLACE semantics, not merge semantics. An agent may emit several
+ * edits messages during a turn; the last one is authoritative and supersedes
+ * every earlier draft outright. Only the paths it names are written, so a path
+ * that appeared in a draft but is absent from the final message is dropped
+ * rather than carried forward. This mirrors what `turnInstructions` promises the
+ * agent, and it lets an agent retract a draft edit simply by omitting it.
+ *
+ * A malformed edits message aborts the whole turn: a batch is applied in full or
+ * not at all, so a partial write can never land.
  */
 export async function applyEdit(
   client: AppServerHandle,
@@ -333,12 +354,20 @@ export async function applyEdit(
     );
   }
 
-  const edits = new Map<string, string>();
+  // Replace, don't merge: each edits message supersedes the previous one, so the
+  // last one alone decides what gets written. Every item is still parsed, so a
+  // malformed draft aborts the turn even when a later message would replace it.
+  let finalEdits: PendingEdit[] | undefined;
   for (const item of completedItems(outcome.value, threadId)) {
     const parsed = editsFromItem(item);
     if (!parsed.ok) return parsed;
-    for (const edit of parsed.value) edits.set(edit.path, edit.content);
+    if (parsed.value !== undefined) finalEdits = parsed.value;
   }
+
+  // Within the winning message, a repeated path still resolves last-wins.
+  const edits = new Map<string, string>(
+    (finalEdits ?? []).map((edit) => [edit.path, edit.content]),
+  );
 
   if (edits.size === 0) {
     return err('CODEX_EDIT_MISSING', 'Codex completed the turn without returning any file edits');
