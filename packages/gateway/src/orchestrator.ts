@@ -2,6 +2,7 @@ import {
   err,
   ok,
   type ApprovalContract,
+  type DomainError,
   type ExecutionPlan,
   type Result,
 } from '@codex-lens/shared';
@@ -79,6 +80,53 @@ export interface VerticalSliceReport {
   sandbox: SandboxHandle;
   /** True when the tree was returned to its baseline because tests failed. */
   rolledBack: boolean;
+}
+
+/**
+ * Code of the error `runVerticalSlice` fails with when a run failed *and* the
+ * working copy it made could not be removed afterwards. Distinct from the
+ * failure that triggered cleanup, because it means something different to the
+ * caller: not "the change was not made" but "the change was not made and there
+ * is a sandbox still on disk that only you can now get rid of".
+ */
+export const SANDBOX_CLEANUP_FAILED = 'SANDBOX_CLEANUP_FAILED';
+
+/**
+ * What `SANDBOX_CLEANUP_FAILED` carries in `error.details`: everything needed
+ * to either retry the cleanup or report the leak.
+ */
+export interface SandboxCleanupFailure {
+  /**
+   * The undisposed working copy. Still live as far as `sandbox.ts` is
+   * concerned, so it remains a valid argument to `disposeSandbox` and
+   * `rollback` — this is the handle a caller retries with.
+   */
+  sandbox: SandboxHandle;
+  /** The failure that ended the run and started cleanup in the first place. */
+  cause: DomainError;
+  /** Why disposal could not remove the copy. */
+  disposeError: DomainError;
+  /**
+   * Why the copy could not be returned to its baseline, when that also failed.
+   * Absent means the surviving copy is at its baseline: it holds no edit from
+   * this run, only the pristine source.
+   */
+  rollbackError?: DomainError;
+  /** False when `rollbackError` is set: the copy may still hold the edit. */
+  atBaseline: boolean;
+}
+
+/**
+ * Reads the recovery context off a `runVerticalSlice` failure, or `undefined`
+ * if the error is not a cleanup failure. Callers use this rather than reaching
+ * into `details` themselves, which is typed `unknown` by design.
+ */
+export function readSandboxCleanupFailure(
+  error: DomainError,
+): SandboxCleanupFailure | undefined {
+  return error.code === SANDBOX_CLEANUP_FAILED
+    ? (error.details as SandboxCleanupFailure)
+    : undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -232,8 +280,13 @@ async function editAndVerify(
  * is never touched — and an edit the tests reject is rolled back to its
  * baseline rather than handed back half-applied.
  *
- * A Failed Result means the change was not made and nothing was left behind. A
- * successful Result means the run completed and reported on itself: read
+ * A Failed Result means the change was not made. It normally also means nothing
+ * was left behind — with one exception it names rather than hides: if the
+ * sandbox could not be removed, the failure is `SANDBOX_CLEANUP_FAILED` and
+ * carries the surviving sandbox's handle. Read it with
+ * `readSandboxCleanupFailure` and dispose the copy; nobody else holds it.
+ *
+ * A successful Result means the run completed and reported on itself: read
  * `status` to learn whether the edit survived verification, and dispose the
  * sandbox it returns.
  */
@@ -267,13 +320,56 @@ export async function runVerticalSlice(
   const sandbox = prepared.value;
 
   const report = await editAndVerify(plan, sandbox, options);
-  if (!report.ok) {
-    // The caller gets no handle on this path, so the sandbox is this
-    // function's to clean up. Rolled back before disposal so a failure that
-    // leaves the copy alive — a disposal error — still leaves it at baseline.
-    await rollback(sandbox);
-    await disposeSandbox(sandbox);
+  if (report.ok) {
+    return report;
   }
 
-  return report;
+  return cleanUpAfterFailure(sandbox, report.error);
+}
+
+/**
+ * Removes the working copy a failed run leaves behind, and answers for it.
+ *
+ * The caller gets no handle on this path, so the sandbox is this function's to
+ * clean up: nobody else can. Rollback runs before disposal so that if the copy
+ * does survive, it survives at its baseline rather than holding a half-applied
+ * edit.
+ *
+ * Disposal is what decides the answer. If the copy is gone, the run's original
+ * failure is the whole truth — nothing was left behind, and a rollback that
+ * failed on a tree that no longer exists is moot, so it is not reported. If the
+ * copy is still there, saying only "the edit failed" would be a promise this
+ * function did not keep: there is a live sandbox, and this is the last moment
+ * anyone holds the handle to it. So the failure is replaced by one that carries
+ * that handle, with the original failure inside it, and the sandbox is left
+ * registered so the handle still works.
+ */
+async function cleanUpAfterFailure(
+  sandbox: SandboxHandle,
+  cause: DomainError,
+): Promise<Result<never>> {
+  const restored = await rollback(sandbox);
+  const disposed = await disposeSandbox(sandbox);
+
+  if (disposed.ok) {
+    return { ok: false, error: cause };
+  }
+
+  const details: SandboxCleanupFailure = {
+    sandbox,
+    cause,
+    disposeError: disposed.error,
+    ...(restored.ok ? {} : { rollbackError: restored.error }),
+    atBaseline: restored.ok,
+  };
+
+  return err(
+    SANDBOX_CLEANUP_FAILED,
+    `The run failed (${cause.code}: ${cause.message}) and its sandbox at "${sandbox.root}" could not be removed (${disposed.error.code}: ${disposed.error.message}). ` +
+      (restored.ok
+        ? 'The copy is at its baseline and holds no edit from this run.'
+        : `It also could not be rolled back (${restored.error.code}: ${restored.error.message}), so it may still hold the edit.`) +
+      ' Dispose it with the handle in this error.',
+    details,
+  );
 }

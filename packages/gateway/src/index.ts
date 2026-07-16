@@ -85,10 +85,15 @@ export {
 export type { ExecutionPlanRequest } from './plan-generation.js';
 export { runTests } from './test-runner.js';
 export type { Sandbox, TestCounts, TestRun } from './test-runner.js';
-export { runVerticalSlice } from './orchestrator.js';
+export {
+  readSandboxCleanupFailure,
+  runVerticalSlice,
+  SANDBOX_CLEANUP_FAILED,
+} from './orchestrator.js';
 export type {
   ExecutionApproval,
   ExecutionApprovalIssuer,
+  SandboxCleanupFailure,
   VerticalSliceOptions,
   VerticalSliceReport,
 } from './orchestrator.js';

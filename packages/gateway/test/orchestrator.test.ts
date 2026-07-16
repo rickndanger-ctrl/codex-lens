@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -8,19 +9,50 @@ import {
   type ApprovalContract,
   type ExecutionPlan,
 } from '@codex-lens/shared';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type {
   AppServerHandle,
   AppServerMessage,
 } from '../src/codex/transport.js';
 import {
+  readSandboxCleanupFailure,
   runVerticalSlice,
+  SANDBOX_CLEANUP_FAILED,
   type VerticalSliceReport,
 } from '../src/orchestrator.js';
 import type { ExecutionPlanRequest } from '../src/plan-generation.js';
 import { SAMPLE_REPO_ID, SAMPLE_REPO_ROOT } from '../src/registryConfig.js';
 import { disposeSandbox, type SandboxHandle } from '../src/sandbox.js';
+
+const ROLLBACK_ERROR = {
+  code: 'SANDBOX_ROLLBACK_FAILED',
+  message: 'git reset --hard could not restore the baseline',
+};
+const DISPOSE_ERROR = {
+  code: 'SANDBOX_DISPOSE_FAILED',
+  message: 'the working copy could not be removed',
+};
+
+/**
+ * Which cleanup steps fail. Both off by default, so every test that does not
+ * ask for a failure runs against the real sandbox module.
+ */
+const failing = vi.hoisted(() => ({ rollback: false, dispose: false }));
+
+// Cleanup failing is the one thing a sandbox cannot be talked into: a real
+// `rm` refuses to fail on a directory this process owns. Injected here so the
+// orchestrator's answer to it can be tested at all.
+vi.mock('../src/sandbox.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/sandbox.js')>();
+  return {
+    ...actual,
+    rollback: async (handle: SandboxHandle) =>
+      failing.rollback ? { ok: false, error: ROLLBACK_ERROR } : actual.rollback(handle),
+    disposeSandbox: async (handle: SandboxHandle) =>
+      failing.dispose ? { ok: false, error: DISPOSE_ERROR } : actual.disposeSandbox(handle),
+  };
+});
 
 const TIMEOUT_MS = 60_000;
 const THREAD_ID = '019f63c2-8b22-7613-89ce-023b27e0be10';
@@ -185,6 +217,9 @@ function readFixture(): Promise<string> {
 }
 
 afterEach(async () => {
+  // Flags first: a sandbox a test made undisposable must still be removed here.
+  failing.rollback = false;
+  failing.dispose = false;
   await Promise.all([...live].map(async (handle) => disposeSandbox(handle)));
   live.clear();
 });
@@ -377,6 +412,119 @@ describe('runVerticalSlice', () => {
       expect(
         await readFile(path.join(report.sandbox.root, CALCULATOR), 'utf8'),
       ).toContain('left - right');
+    },
+    TIMEOUT_MS,
+  );
+
+  it(
+    'hands back the sandbox when cleanup cannot remove it',
+    async () => {
+      failing.rollback = true;
+      failing.dispose = true;
+      // Written, then rejected by the tests: the rollback this triggers fails,
+      // which ends the run, and the cleanup that follows cannot remove the copy.
+      const client = createFakeClient({
+        edits: [{ path: CALCULATOR, content: BROKEN_CALCULATOR }],
+      });
+
+      const result = await runVerticalSlice({
+        request: request(),
+        repoId: SAMPLE_REPO_ID,
+        approval: (plan) => approvalFor(plan),
+        client,
+      });
+
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error.code).toBe(SANDBOX_CLEANUP_FAILED);
+
+      const failure = readSandboxCleanupFailure(result.error);
+      expect(failure).toBeDefined();
+      if (failure === undefined) return;
+      live.add(failure.sandbox);
+
+      // The failure that ended the run survives inside the cleanup failure
+      // rather than being replaced by it.
+      expect(failure.cause).toEqual(ROLLBACK_ERROR);
+      expect(failure.disposeError).toEqual(DISPOSE_ERROR);
+      expect(failure.rollbackError).toEqual(ROLLBACK_ERROR);
+      // Rollback failed too, so the copy is not known to be at its baseline.
+      expect(failure.atBaseline).toBe(false);
+      // The message alone is enough to find the leak by hand.
+      expect(result.error.message).toContain(failure.sandbox.root);
+      expect(result.error.message).toContain(DISPOSE_ERROR.message);
+
+      // The copy really is still there, still holding the rejected edit — the
+      // leak the caller is being told about is real.
+      expect(existsSync(failure.sandbox.root)).toBe(true);
+      expect(
+        await readFile(path.join(failure.sandbox.root, CALCULATOR), 'utf8'),
+      ).toBe(BROKEN_CALCULATOR);
+      // The registered repo is untouched regardless.
+      expect(await readFixture()).toContain('left - right');
+
+      // The handle is not just a description: once disposal can succeed again,
+      // it is what recovers the leak.
+      failing.dispose = false;
+      const recovered = await disposeSandbox(failure.sandbox);
+      expect(recovered.ok).toBe(true);
+      expect(existsSync(failure.sandbox.root)).toBe(false);
+    },
+    TIMEOUT_MS,
+  );
+
+  it(
+    'reports a surviving copy as at its baseline when only disposal failed',
+    async () => {
+      failing.dispose = true;
+      // No edits: the run fails before any write, so rollback has nothing to
+      // undo and succeeds.
+      const client = createFakeClient({ edits: [] });
+
+      const result = await runVerticalSlice({
+        request: request(),
+        repoId: SAMPLE_REPO_ID,
+        approval: (plan) => approvalFor(plan),
+        client,
+      });
+
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      const failure = readSandboxCleanupFailure(result.error);
+      expect(failure).toBeDefined();
+      if (failure === undefined) return;
+      live.add(failure.sandbox);
+
+      expect(failure.cause).toMatchObject({ code: 'CODEX_EDIT_MISSING' });
+      expect(failure.atBaseline).toBe(true);
+      expect(failure.rollbackError).toBeUndefined();
+      expect(result.error.message).toContain('holds no edit from this run');
+    },
+    TIMEOUT_MS,
+  );
+
+  it(
+    'reports only the original failure when disposal removed the copy',
+    async () => {
+      // A rollback failure on a copy that is then removed entirely is moot:
+      // nothing is left behind, so nothing is added to the caller's error.
+      failing.rollback = true;
+      const client = createFakeClient({ edits: [] });
+
+      const result = await runVerticalSlice({
+        request: request(),
+        repoId: SAMPLE_REPO_ID,
+        approval: (plan) => approvalFor(plan),
+        client,
+      });
+
+      expect(result).toMatchObject({
+        ok: false,
+        error: { code: 'CODEX_EDIT_MISSING' },
+      });
+      if (result.ok) return;
+      expect(result.error.code).not.toBe(SANDBOX_CLEANUP_FAILED);
+      expect(result.error.details).toBeUndefined();
     },
     TIMEOUT_MS,
   );
