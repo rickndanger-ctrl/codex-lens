@@ -9,7 +9,12 @@ import {
 
 import { assertExecutionApproved } from './approval-binding.js';
 import { applyEdit } from './codex/apply-edit.js';
-import { createThread, initialize, type CodexClientOptions } from './codex/client.js';
+import {
+  createThread,
+  initialize,
+  resumeThread,
+  type CodexClientOptions,
+} from './codex/client.js';
 import type { AppServerHandle } from './codex/transport.js';
 import {
   generateExecutionPlan,
@@ -61,6 +66,8 @@ export interface VerticalSliceOptions {
    */
   approval?: ExecutionApproval;
   client: AppServerHandle;
+  /** Existing Codex thread to continue. Omitted starts a fresh thread. */
+  threadId?: string;
   /** Per-request budget for the Codex handshake, thread start and edit turn. */
   codexOptions?: CodexClientOptions;
   /** Wall-clock budget for the verification run. */
@@ -73,6 +80,8 @@ export interface VerticalSliceReport {
    * it. `Failed` means the tests rejected the edit and it has been rolled back.
    */
   status: 'Complete' | 'Failed';
+  /** Codex thread used for the edit, suitable for a later resumed slice. */
+  threadId: string;
   /** The generated plan the approval was checked against. */
   plan: ExecutionPlan;
   /** `plan.contentDigest` — the exact content the approval authorized. */
@@ -277,10 +286,17 @@ async function editAndVerify(
   sandbox: SandboxHandle,
   options: VerticalSliceOptions,
 ): Promise<Result<VerticalSliceReport>> {
-  const thread = await createThread(options.client, {
-    ...options.codexOptions,
-    cwd: sandbox.root,
-  });
+  const thread =
+    options.threadId === undefined
+      ? await createThread(options.client, {
+          ...options.codexOptions,
+          cwd: sandbox.root,
+        })
+      : await resumeThread(
+          options.client,
+          options.threadId,
+          options.codexOptions,
+        );
   if (!thread.ok) {
     return thread;
   }
@@ -329,6 +345,7 @@ async function editAndVerify(
 
   return ok({
     status: passed ? 'Complete' : 'Failed',
+    threadId: thread.value.threadId,
     plan,
     planDigest: plan.contentDigest,
     appliedFiles: applied.value.changedFiles,

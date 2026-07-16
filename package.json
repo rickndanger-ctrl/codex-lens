@@ -11,6 +11,7 @@
   },
   "scripts": {
     "demo": "node --import tsx packages/shared/src/demo/run-flow.ts",
+    "slice": "npm run slice -w @codex-lens/gateway --",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "test": "vitest run",
