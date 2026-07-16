@@ -197,6 +197,45 @@ describe('applyEdit', () => {
   );
 
   it(
+    'rejects a malformed final edits message without writing an earlier draft',
+    async () => {
+      const handle = await sandbox();
+      const draftPath = path.join(handle.root, 'src', 'multiply.js');
+      const client = createScriptedClient([
+        {
+          type: 'agentMessage',
+          id: 'agent-draft',
+          text: JSON.stringify({
+            edits: [
+              {
+                path: 'src/multiply.js',
+                content: 'export const multiply = (a, b) => a * b;\n',
+              },
+            ],
+          }),
+        },
+        {
+          type: 'agentMessage',
+          id: 'agent-malformed-final',
+          text: JSON.stringify({ edits: [{ path: 'src/multiply.js' }] }),
+        },
+      ]);
+
+      const result = await applyEdit(client, THREAD_ID, plan(), handle);
+
+      expect(result).toEqual({
+        ok: false,
+        error: {
+          code: 'CODEX_EDIT_INVALID',
+          message: 'Codex agent message contained an invalid edits payload',
+        },
+      });
+      expect(existsSync(draftPath)).toBe(false);
+    },
+    TIMEOUT_MS,
+  );
+
+  it(
     'materializes a canned write-file tool call through the sandbox helper',
     async () => {
       const handle = await sandbox();
@@ -280,4 +319,24 @@ describe('applyEdit', () => {
     },
     TIMEOUT_MS,
   );
+
+  it('uses the configured full-turn timeout', async () => {
+    const handle = await sandbox();
+    const client = createScriptedClient([]);
+    client.send = async (message) => {
+      client.sent.push(message);
+    };
+
+    const result = await applyEdit(client, THREAD_ID, plan(), handle, {
+      timeoutMs: 10,
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      error: {
+        code: 'CODEX_TURN_TIMED_OUT',
+        message: 'Codex did not complete the edit turn within 10ms',
+      },
+    });
+  });
 });

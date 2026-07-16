@@ -12,15 +12,21 @@ import {
   writeFileInSandbox,
   type SandboxHandle,
 } from '../sandbox.js';
-import { CODEX_AUTH_UNAVAILABLE, isAuthUnavailable } from './client.js';
+import {
+  CODEX_AUTH_UNAVAILABLE,
+  isAuthUnavailable,
+  type CodexClientOptions,
+} from './client.js';
 import type { AppServerHandle, AppServerMessage } from './transport.js';
 
-const TURN_TIMEOUT_MS = 30_000;
+const DEFAULT_TURN_TIMEOUT_MS = 5 * 60_000;
 
 export interface AppliedEdit {
   /** Sandbox-relative paths successfully materialized by this turn. */
   changedFiles: string[];
 }
+
+export type ApplyEditOptions = CodexClientOptions;
 
 interface PendingEdit {
   path: string;
@@ -61,6 +67,7 @@ async function runTurn(
   threadId: string,
   executionPlan: ExecutionPlan,
   sandbox: SandboxHandle,
+  timeoutMs: number,
 ): Promise<Result<TurnOutcome>> {
   const requestId = `apply-edit-${randomUUID()}`;
   const messages: AppServerMessage[] = [];
@@ -95,10 +102,10 @@ async function runTurn(
       settle(
         err(
           'CODEX_TURN_TIMED_OUT',
-          `Codex did not complete the edit turn within ${TURN_TIMEOUT_MS}ms`,
+          `Codex did not complete the edit turn within ${timeoutMs}ms`,
         ),
       );
-    }, TURN_TIMEOUT_MS);
+    }, timeoutMs);
     timer.unref();
 
     const unsubscribe = client.onMessage((message) => {
@@ -227,8 +234,15 @@ function editsFromItem(item: unknown): Result<PendingEdit[]> {
 
   if (item.type === 'agentMessage' && typeof item.text === 'string') {
     try {
-      const edits = readEdits(parseJson(item.text));
-      return edits === undefined ? ok([]) : ok(edits);
+      const parsed = parseJson(item.text);
+      const edits = readEdits(parsed);
+      if (edits !== undefined) return ok(edits);
+      return isRecord(parsed) && Object.hasOwn(parsed, 'edits')
+        ? err(
+            'CODEX_EDIT_INVALID',
+            'Codex agent message contained an invalid edits payload',
+          )
+        : ok([]);
     } catch {
       // Progress and commentary agent messages are allowed. A valid structured
       // final message is still required before the turn can succeed.
@@ -293,12 +307,19 @@ export async function applyEdit(
   threadId: string,
   executionPlan: ExecutionPlan,
   sandbox: SandboxHandle,
+  options: ApplyEditOptions = {},
 ): Promise<Result<AppliedEdit>> {
   if (threadId.trim().length === 0) {
     return err('INVALID_THREAD_ID', 'Thread id must not be empty');
   }
 
-  const outcome = await runTurn(client, threadId, executionPlan, sandbox);
+  const outcome = await runTurn(
+    client,
+    threadId,
+    executionPlan,
+    sandbox,
+    options.timeoutMs ?? DEFAULT_TURN_TIMEOUT_MS,
+  );
   if (!outcome.ok) return outcome;
 
   const status = outcome.value.turn.status;
