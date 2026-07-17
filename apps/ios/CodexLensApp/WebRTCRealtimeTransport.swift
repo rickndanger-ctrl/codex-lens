@@ -9,8 +9,10 @@
 
 import Foundation
 import CodexLensKit
-// TODO(device): import WebRTC        // add the WebRTC SwiftPM/binary dependency
-// TODO(device): import AVFoundation  // for AVAudioSession + mic/speaker routing
+// TODO(device): import WebRTC  // add the WebRTC SwiftPM/binary dependency
+// Audio I/O is the GLASSES, not the phone — see MetaGlassesCapture and
+// ONDEVICE.md. AVFoundation is only for the WebRTC audio-unit plumbing, NOT for
+// the phone's own mic/speaker.
 
 enum DeviceNotImplemented: Error {
     case notImplemented(String)
@@ -21,19 +23,24 @@ enum DeviceNotImplemented: Error {
 /// is device work.
 final class WebRTCRealtimeTransport: RealtimeTransport, @unchecked Sendable {
     func connect(using credential: RealtimeCredential) async throws {
-        // TODO(device): configure AVAudioSession (.playAndRecord, .voiceChat),
-        // request mic permission, create the RTCPeerConnection, add the local
-        // mic track, and complete the SDP offer/answer to OpenAI Realtime using
-        // `credential.value` (the SHORT-LIVED secret — never a long-lived key).
-        // Attach the remote audio track for playback. Wire ICE/connection-state
+        // TODO(device): create the RTCPeerConnection and complete the SDP
+        // offer/answer to OpenAI Realtime using `credential.value` (the
+        // SHORT-LIVED secret — never a long-lived key). Wire ICE/connection-state
         // changes to RealtimeSessionCoordinator.connectionLost(_:).
+        //
+        // TODO(meta): the local audio track is the GLASSES microphone, sourced
+        // from MetaGlassesCapture.startMicrophone(), NOT the phone mic — and its
+        // shape (continuous stream vs push-to-talk) is UNCONFIRMED. The remote
+        // (assistant) audio track plays through the glasses' open-ear speakers
+        // via MetaGlassesCapture.playAssistantAudio. See ONDEVICE.md "MUST
+        // CONFIRM IN META DOCS" #1, #2, #4 before wiring either direction.
         _ = credential
         throw DeviceNotImplemented.notImplemented("WebRTCRealtimeTransport.connect")
     }
 
     func disconnect() async {
-        // TODO(device): close the peer connection, stop tracks, deactivate the
-        // audio session.
+        // TODO(device): close the peer connection and stop tracks.
+        // TODO(meta): stop the glasses mic/playback via MetaGlassesCapture.
     }
 
     func send(_ message: RealtimeOutboundMessage) async throws {
