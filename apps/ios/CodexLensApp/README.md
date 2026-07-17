@@ -15,11 +15,13 @@ fallback controls.
 The files here are **scaffold with `TODO(device)` / `TODO(meta)` markers**, not
 working audio. No fake pretends to carry audio or connect live.
 
-> **Read `ONDEVICE.md` first** — its "MUST CONFIRM IN META DOCS" section lists
-> what has to be verified against Meta's official toolkit docs before writing any
-> capture code. Top question: does the toolkit give a **continuous low-latency
-> audio stream** (always-listening) or only **clips / push-to-talk**? That
-> decides the whole voice UX. No Meta SDK calls are written until it's answered.
+> **Read `ONDEVICE.md` and `docs/CAPTURE.md` first.** The big questions are
+> resolved: model `gpt-realtime-2.1` over WebRTC, image input supported, audio is
+> **continuous** (glasses = Bluetooth audio device, standard `AVAudioSession`),
+> and the gateway already mints the ephemeral credential server-side. The one
+> open wiring TODO is the exact OpenAI audio sample rate/format — pull it from
+> OpenAI's Realtime WebRTC doc at implementation, don't guess. No SDK calls are
+> written in this scaffold.
 
 ## One-time setup (in Xcode, on the Mac with the device attached)
 
@@ -38,14 +40,14 @@ on-device tests. The checklist below is the short form; each item is a
 `TODO(device)`/`TODO(meta)` in the code and none can be verified off-device.
 
 - [ ] **Glasses connection + mic** (`MetaGlassesCapture`) — connect via the Meta
-      toolkit; open the mic per MUST CONFIRM #1 (continuous vs push-to-talk).
+      toolkit; open the mic (continuous via AVAudioSession — confirmed).
 - [ ] **WebRTC peer connection** — in `WebRTCRealtimeTransport.connect(using:)`,
       open the connection to OpenAI Realtime using the **short-lived credential**
       from `GatewayClient.realtimeCredential()` (never a long-lived key). The
       local audio track is the **glasses** mic; the remote track plays through
       the **glasses** open-ear speakers.
-- [ ] **Interruption/barge-in** — only if MUST CONFIRM #1 says continuous audio;
-      otherwise this becomes push-to-talk.
+- [ ] **Interruption/barge-in** — audio is continuous (glasses = Bluetooth audio
+      device), so always-listening barge-in is the path.
 - [ ] **Reconnect** — drive `coordinator.connectionLost(_:)` from glasses
       disconnect events and WebRTC ICE changes.
 - [ ] **Tool calls** — when the model calls `start_task` / `report_progress`

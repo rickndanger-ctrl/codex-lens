@@ -36,9 +36,9 @@ Ray-Ban Meta glasses
   v
 iPhone app  ── POST /v1/realtime/credentials ──> OUR GATEWAY (holds the OpenAI key)
   |                                    <── short-lived credential ──
-  |  audio (PCM)  +  optional frames
+  |  audio (PCM)  +  ~1 fps JPEG frames
   v
-OpenAI Realtime  (WebRTC, opened with the SHORT-LIVED credential)
+OpenAI Realtime  gpt-realtime-2.1  (WebRTC, opened with the SHORT-LIVED credential)
   |-- audio reply --> phone --> glasses open-ear speakers
   |-- tool calls (start_task / report_progress) --> OUR GATEWAY --> Codex task
 ```
@@ -82,7 +82,8 @@ different places.**
 ## What our on-device layer MUST implement
 
 - **Audio in:** `AVAudioSession .playAndRecord` + Bluetooth; tap the input node;
-  resample to OpenAI Realtime's PCM format; stream continuously.
+  resample to OpenAI Realtime's PCM format (exact rate = the one remaining wiring
+  TODO, below); stream continuously.
 - **Audio out:** play the model's audio through the session → glasses speakers.
 - **Video in:** connect via the DAT SDK; subscribe to camera frames; decode →
   JPEG; throttle ~1 fps; send **only** on explicit action.
@@ -98,29 +99,44 @@ remains is wiring the two capture channels above into it, on-device.
 
 ---
 
-## Where WE differ from the reference — read these before coding
+## Confirmed against OpenAI's official Realtime docs
+
+These were open questions; they are now settled:
+
+- **Model:** target **`gpt-realtime-2.1`** — OpenAI's GA Realtime model
+  (speech-to-speech with reasoning).
+- **Transport:** **WebRTC is OpenAI's recommended path for mobile clients** that
+  capture and play audio — exactly our phone + glasses case. (Our
+  `WebRTCRealtimeTransport` already targets this.)
+- **Image input:** the GA Realtime model **accepts image input**, so the
+  **~1 fps glasses camera frames are supported** as visual context. The camera
+  pipeline does **not** need a separate vision call.
+- **Credential flow:** OpenAI's official recommendation **is exactly our design**
+  — the server mints an ephemeral client secret via
+  **`POST /v1/realtime/client_secrets`** and the phone uses that; the long-lived
+  key stays server-side. **Our gateway already implements this pattern**
+  (`POST /v1/realtime/credentials` → short-lived credential; see `docs/M4.md`).
+
+## Where WE differ from the reference
 
 1. **Key server-side (the core difference).** We fetch a short-lived credential
    from the gateway; the phone never holds the OpenAI key. VisionClaw embeds the
-   Gemini key in the app.
+   Gemini key in the app. This matches OpenAI's own `client_secrets`
+   recommendation (above).
 
-2. **Audio format — CONFIRM against OpenAI Realtime docs.** The reference used
-   **16 kHz in / 24 kHz out** for Gemini. OpenAI Realtime uses `pcm16`; confirm
-   the exact sample rate it expects (commonly **24 kHz pcm16** both directions)
-   and resample to *that*, not 16 kHz.
-
-3. **Image/vision input — the biggest OpenAI-specific unknown, CONFIRM.** Gemini
-   Live natively accepts inline video frames in its realtime input. OpenAI
-   Realtime's image handling is different — confirm **whether and how** it accepts
-   ~1 fps JPEG frames (e.g. as image content on a conversation item), or whether
-   visual context must go through a separate vision call. The ~1 fps camera
-   pipeline may need adapting for OpenAI.
-
-4. **Transport.** We use **WebRTC** (recommended for client audio); the reference
-   used a WebSocket to Gemini. OpenAI Realtime supports both.
-
-5. **Tools.** Our tool calls hit **our gateway** (`start_task`, `report_progress`
+2. **Tools.** Our tool calls hit **our gateway** (`start_task`, `report_progress`
    → a Codex task, per `CodexLensTools`), not OpenClaw's general-purpose skills.
+
+3. **Model & provider.** `gpt-realtime-2.1` over WebRTC, not Gemini Live over a
+   WebSocket.
+
+## The one remaining wiring TODO
+
+**Audio sample rate + format** — do **not** guess a number. At implementation
+time, pull the exact input/output PCM sample rate and format from **OpenAI's
+Realtime WebRTC connection doc** and resample the glasses audio to that. (The
+Gemini reference used 16 kHz in / 24 kHz out; OpenAI's values may differ, so read
+them from the doc rather than copying the reference.)
 
 ---
 

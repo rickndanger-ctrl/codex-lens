@@ -29,11 +29,12 @@ final class WebRTCRealtimeTransport: RealtimeTransport, @unchecked Sendable {
         // changes to RealtimeSessionCoordinator.connectionLost(_:).
         //
         // TODO(meta): the local audio track is the GLASSES microphone, sourced
-        // from MetaGlassesCapture.startMicrophone(), NOT the phone mic — and its
-        // shape (continuous stream vs push-to-talk) is UNCONFIRMED. The remote
-        // (assistant) audio track plays through the glasses' open-ear speakers
-        // via MetaGlassesCapture.playAssistantAudio. See ONDEVICE.md "MUST
-        // CONFIRM IN META DOCS" #1, #2, #4 before wiring either direction.
+        // from MetaGlassesCapture.startMicrophone(), NOT the phone mic. Audio is
+        // continuous (glasses = Bluetooth audio device). The remote (assistant)
+        // track plays through the glasses' open-ear speakers via
+        // MetaGlassesCapture.playAssistantAudio. The one open detail is the exact
+        // PCM sample rate/format — pull it from OpenAI's Realtime WebRTC doc
+        // (docs/CAPTURE.md, ONDEVICE.md "Remaining wiring TODO #1").
         _ = credential
         throw DeviceNotImplemented.notImplemented("WebRTCRealtimeTransport.connect")
     }

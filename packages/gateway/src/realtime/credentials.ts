@@ -6,7 +6,8 @@ export const REALTIME_CREDENTIALS_PATH = '/v1/realtime/credentials';
 /** The long-lived OpenAI key lives in this env var, on the Mac, and never leaves. */
 export const OPENAI_API_KEY_ENV = 'OPENAI_API_KEY';
 
-export const DEFAULT_REALTIME_MODEL = 'gpt-realtime';
+// OpenAI's GA Realtime model (speech-to-speech with reasoning), confirmed target.
+export const DEFAULT_REALTIME_MODEL = 'gpt-realtime-2.1';
 const DEFAULT_OPENAI_BASE_URL = 'https://api.openai.com/v1';
 
 const nonEmptyString = z.string().trim().min(1);
@@ -87,6 +88,12 @@ export function createOpenAiRealtimeIssuer(
     }
     const model = request.model ?? defaultModel;
 
+    // TODO(wiring): OpenAI's official ephemeral-secret endpoint is
+    // `POST /v1/realtime/client_secrets`. This `/realtime/sessions` call + the
+    // defensive response parse below are a working default for tests; at deploy,
+    // align the exact path, request body, and response shape to OpenAI's
+    // client_secrets doc. The server-mint pattern itself (key stays here, phone
+    // gets only the ephemeral secret) is already correct.
     let response: Response;
     try {
       response = await fetchImpl(`${baseUrl}/realtime/sessions`, {

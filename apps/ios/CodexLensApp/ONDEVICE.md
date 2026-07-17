@@ -23,48 +23,47 @@ document is the checklist for filling it in and confirming it on hardware.
 
 ---
 
-## ⚠️ MUST CONFIRM IN META DOCS (do this FIRST, before writing any capture code)
+## Confirmed — no longer open questions
 
-Some of this was **de-risked** by studying the VisionClaw reference (a
-Gemini-based build of the same idea) — see `docs/CAPTURE.md`. No Meta SDK calls
-are written in our Swift; the points below are marked, not called. Confirm the
-**still-open** items against Meta's and OpenAI's **official** docs before writing
-the capture layer.
+Resolved against OpenAI's official Realtime docs and the VisionClaw reference
+(see `docs/CAPTURE.md`). No Meta/OpenAI SDK calls are written in our Swift.
 
-1. **Audio: continuous — LARGELY DE-RISKED (was our top question).**
-   The reference shows the glasses pair as a **Bluetooth audio device**, so their
-   mic/speakers ride the standard iOS `AVAudioSession` (`.playAndRecord`,
-   `.allowBluetooth`/`.allowBluetoothHFP`). It streams **continuously** (~100 ms
-   PCM chunks) — **no special DAT audio API and no push-to-talk required.** So the
-   default is always-listening; PTT is only a fallback. *Still verify on your
-   hardware that the glasses actually route as the audio input/output.*
+- **Model:** `gpt-realtime-2.1` (GA Realtime, speech-to-speech with reasoning).
+- **Transport:** **WebRTC** — OpenAI's recommended path for mobile clients that
+  capture/play audio (our phone + glasses case).
+- **Image input:** the GA Realtime model **accepts image input**, so ~1 fps
+  glasses camera frames are supported as visual context — no separate vision
+  call needed.
+- **Credential flow:** OpenAI officially recommends the server minting an
+  ephemeral client secret via `POST /v1/realtime/client_secrets`; the phone uses
+  that, the long-lived key stays server-side. **Our gateway already implements
+  this** (`POST /v1/realtime/credentials`).
+- **Audio is continuous.** The glasses pair as a **Bluetooth audio device**, so
+  mic/speaker ride the standard iOS `AVAudioSession` (`.playAndRecord`,
+  `.allowBluetooth`/`.allowBluetoothHFP`) — always-listening, no push-to-talk,
+  no DAT audio API. (Still verify on hardware that the glasses route as the
+  audio input/output.)
 
-2. **Audio format — CONFIRM (OpenAI-specific).** The reference used **16 kHz in /
-   24 kHz out** for Gemini. OpenAI Realtime uses `pcm16`; confirm its exact
-   expected sample rate (commonly **24 kHz pcm16**) and resample to that.
+## Remaining wiring TODOs (do at implementation time)
 
-3. **Image/vision input — CONFIRM (the biggest OpenAI-specific unknown).** Gemini
-   Live natively accepts inline ~1 fps JPEG frames. OpenAI Realtime handles images
-   differently — confirm **whether/how** it accepts camera frames, or whether
-   visual context needs a separate vision call. See `docs/CAPTURE.md` §"differ".
+1. **[OpenAI] Audio sample rate + format — do NOT guess a number.** Pull the
+   exact input/output PCM sample rate and format from **OpenAI's Realtime WebRTC
+   connection doc** and resample the glasses audio to that. (The Gemini reference
+   used 16 kHz in / 24 kHz out; read OpenAI's values from the doc, don't copy.)
 
-4. **Camera via DAT — CONFIRM API details.** Frames come from the DAT SDK
-   (`MWDATCamera`), often **compressed (HEVC/H.264)** needing VideoToolbox decode,
-   throttled to **~1 fps**, encoded JPEG. Confirm capture is **explicit-action
-   only**, never continuous (product rule).
+2. **[Meta] DAT camera API details** — how `MWDATCamera` delivers frames (often
+   compressed HEVC/H.264 → VideoToolbox decode → JPEG), throttled to ~1 fps,
+   **explicit-action only** (product rule). Confirm against Meta's docs.
 
-5. **Pairing & session lifecycle** — how `MWDATCore` discovers/connects the
+3. **[Meta] Pairing & lifecycle** — how `MWDATCore` discovers/connects the
    glasses and what fires on out-of-range / disconnect / battery-dead (drives
    `RealtimeSessionCoordinator.connectionLost(_:)`).
 
-6. **Permissions & entitlements** — which `Info.plist` keys and entitlements the
-   toolkit requires, and the developer-preview / Developer-Mode enablement (§0).
+4. **[Meta] Permissions & entitlements** — the `Info.plist` keys and entitlements
+   the DAT SDK requires (§5), plus Developer-Mode enablement (§0).
 
-7. **Background behavior** — whether the audio session continues while the phone
-   is **locked or backgrounded**.
-
-> Items 2 and 3 (OpenAI audio format + image input) are the real remaining
-> unknowns; item 1 (continuous audio) is de-risked. See `docs/CAPTURE.md`.
+5. **[Meta] Background behavior** — whether the audio session continues while the
+   phone is **locked or backgrounded**.
 
 ---
 
@@ -146,7 +145,7 @@ project (add to target **CodexLensApp**, "Copy items if needed" OFF):
 2. Target ▸ **Signing & Capabilities** ▸ **+ Capability** ▸ **Background Modes**
    ▸ check **Audio, AirPlay, and Picture in Picture**.
 3. **Add whatever entitlement / Info.plist keys the Meta toolkit requires**
-   *(confirm in Meta docs — MUST CONFIRM #6). Likely Bluetooth/companion-device
+   *(confirm in Meta docs — Remaining wiring TODO #4). Likely Bluetooth/companion-device
    related, but do not invent the keys.*
 
 ## 6. Wire the two configuration values (gateway flow — unchanged)
@@ -176,7 +175,7 @@ have no screen.)
 
 ### 7.1 Glasses connection + audio input via the toolkit
 - **Fill in (`MetaGlassesCapture`):** discover and connect to the paired glasses
-  through the toolkit; open the microphone input per MUST CONFIRM #1.
+  through the toolkit; open the microphone input (audio is continuous via AVAudioSession — see "Confirmed").
 - **Action:** launch the app; tap "Start conversation".
 - **Pass:** the app reports the glasses connected; the mic-permission prompt
   appears once; no audio errors in the Xcode console; the session reaches
@@ -227,7 +226,7 @@ have no screen.)
   range) for ~30 seconds, then return.
 - **Pass:** the Mac task keeps running; on return the session reconnects and
   resumes speaking progress from where it left off (the cursor persists), losing
-  no events. *(Confirm background audio behavior against MUST CONFIRM #7.)*
+  no events. *(Confirm background audio behavior against Remaining wiring TODO #5.)*
 
 ### 7.8 Emergency stop
 - **Fill in:** a prominent "Stop" control calls `await viewModel.emergencyStop()`,
