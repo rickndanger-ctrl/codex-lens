@@ -25,46 +25,46 @@ document is the checklist for filling it in and confirming it on hardware.
 
 ## ⚠️ MUST CONFIRM IN META DOCS (do this FIRST, before writing any capture code)
 
-The Wearables Device Access Toolkit API is **not yet confirmed** in this repo. No
-Meta SDK calls are written in the Swift — only marked integration points. Confirm
-each of these against Meta's **official** toolkit documentation before building
-the capture layer. The answers change the architecture, so resolve them first.
+Some of this was **de-risked** by studying the VisionClaw reference (a
+Gemini-based build of the same idea) — see `docs/CAPTURE.md`. No Meta SDK calls
+are written in our Swift; the points below are marked, not called. Confirm the
+**still-open** items against Meta's and OpenAI's **official** docs before writing
+the capture layer.
 
-1. **[TOP PRIORITY] Continuous audio, or clips/push-to-talk?**
-   Does the toolkit expose a **continuous, low-latency microphone stream**
-   suitable for a live OpenAI Realtime session (always-listening, with barge-in)?
-   Or does it only provide **short clips / push-to-talk / recorded snippets**?
-   - **Continuous low-latency →** always-listening voice, like the phone-mic
-     design; feed the stream straight into the Realtime session.
-   - **Only clips / PTT →** the UX becomes **push-to-talk**: the user taps to
-     speak, releases to send; no barge-in; the Realtime session receives buffered
-     turns, not a live stream. **This is a major product/UX fork** — do not build
-     the audio path until this is answered.
+1. **Audio: continuous — LARGELY DE-RISKED (was our top question).**
+   The reference shows the glasses pair as a **Bluetooth audio device**, so their
+   mic/speakers ride the standard iOS `AVAudioSession` (`.playAndRecord`,
+   `.allowBluetooth`/`.allowBluetoothHFP`). It streams **continuously** (~100 ms
+   PCM chunks) — **no special DAT audio API and no push-to-talk required.** So the
+   default is always-listening; PTT is only a fallback. *Still verify on your
+   hardware that the glasses actually route as the audio input/output.*
 
-2. **Audio output** — can the app route the assistant's audio to the glasses'
-   open-ear speakers? Is capture + playback **duplex** (simultaneous) or
-   half-duplex? (Half-duplex pushes you further toward push-to-talk.)
+2. **Audio format — CONFIRM (OpenAI-specific).** The reference used **16 kHz in /
+   24 kHz out** for Gemini. OpenAI Realtime uses `pcm16`; confirm its exact
+   expected sample rate (commonly **24 kHz pcm16**) and resample to that.
 
-3. **Camera** — still frames or video? On-demand (user gesture) only? Confirm it
-   supports capturing **only on explicit action** — never continuous recording
-   (product rule).
+3. **Image/vision input — CONFIRM (the biggest OpenAI-specific unknown).** Gemini
+   Live natively accepts inline ~1 fps JPEG frames. OpenAI Realtime handles images
+   differently — confirm **whether/how** it accepts camera frames, or whether
+   visual context needs a separate vision call. See `docs/CAPTURE.md` §"differ".
 
-4. **Audio format/latency** — sample rate, encoding, and buffer sizes the
-   toolkit delivers, and whether they meet OpenAI Realtime's audio input
-   requirements or need resampling.
+4. **Camera via DAT — CONFIRM API details.** Frames come from the DAT SDK
+   (`MWDATCamera`), often **compressed (HEVC/H.264)** needing VideoToolbox decode,
+   throttled to **~1 fps**, encoded JPEG. Confirm capture is **explicit-action
+   only**, never continuous (product rule).
 
-5. **Pairing & session lifecycle** — how the app discovers/connects to the
-   glasses, and what events fire on out-of-range / disconnect / battery-dead.
-   (These drive `RealtimeSessionCoordinator.connectionLost(_:)`.)
+5. **Pairing & session lifecycle** — how `MWDATCore` discovers/connects the
+   glasses and what fires on out-of-range / disconnect / battery-dead (drives
+   `RealtimeSessionCoordinator.connectionLost(_:)`).
 
-6. **Permissions & entitlements** — which `Info.plist` keys, app entitlements,
-   and developer-preview approvals the toolkit requires.
+6. **Permissions & entitlements** — which `Info.plist` keys and entitlements the
+   toolkit requires, and the developer-preview / Developer-Mode enablement (§0).
 
-7. **Background behavior** — whether the glasses audio session can continue while
-   the phone is **locked or backgrounded**.
+7. **Background behavior** — whether the audio session continues while the phone
+   is **locked or backgrounded**.
 
-> Until #1 is answered, treat the audio path as **UNKNOWN**. Do not assume
-> always-listening, and do not write the capture code.
+> Items 2 and 3 (OpenAI audio format + image input) are the real remaining
+> unknowns; item 1 (continuous audio) is de-risked. See `docs/CAPTURE.md`.
 
 ---
 
@@ -74,10 +74,16 @@ the capture layer. The answers change the architecture, so resolve them first.
 - An **iPhone** and its USB cable, plus a free **Apple ID** (for signing).
 - **Ray-Ban Meta glasses**, paired to the iPhone via the **Meta AI app**, with
   up-to-date firmware.
+- **Developer Mode enabled in the Meta AI app** (required before the glasses will
+  expose the camera to the DAT SDK):
+  1. Open the **Meta AI** app on the iPhone.
+  2. **Settings** (gear icon, bottom-left).
+  3. Tap **App Info**.
+  4. Tap the **App version** number **5 times** — this unlocks Developer Mode.
+  5. Go back to Settings → turn on the **Developer Mode** toggle.
 - **Enrollment in Meta's developer preview for the Wearables Device Access
-  Toolkit.** Access is gated — you must be approved before the SDK and its
-  entitlements work. *(Confirm the exact enrollment path and current program name
-  in Meta's official developer docs — see "MUST CONFIRM" above.)*
+  Toolkit** may also be required for SDK/entitlement access. *(Confirm the current
+  enrollment path and program name in Meta's official developer docs.)*
 - The **gateway running on the Mac** (`npm run start` in `~/Foundry/codex-lens`)
   with a real `OPENAI_API_KEY` in its environment and a `CODEX_LENS_GATEWAY_TOKEN`
   set. Note the token — the phone needs it (never the OpenAI key).
@@ -106,15 +112,23 @@ the capture layer. The answers change the architecture, so resolve them first.
 2. Select **`apps/ios/CodexLensKit`** ▸ **Add Package** ▸ add to **CodexLensApp**.
 3. Confirm `import CodexLensKit` compiles.
 
-## 3. Add the Meta Wearables Device Access Toolkit + WebRTC
+## 3. Add the Meta Wearables Device Access Toolkit (DAT SDK) + WebRTC
 
-1. **Meta toolkit:** follow **Meta's official integration guide** to add the
-   Wearables Device Access Toolkit to the app.
-   *(Confirm the delivery mechanism — SwiftPM URL, `.xcframework`, required
-   entitlement — in Meta's docs. Do not guess it here.)*
+1. **Meta DAT SDK (iOS):** add **`github.com/facebook/meta-wearables-dat-ios`**
+   to the app, following **Meta's official integration guide**. The modules you
+   use:
+   - **`MWDATCore`** — device discovery, connection, permissions.
+   - **`MWDATCamera`** — the glasses camera stream (video → JPEG frames).
+   - **`MWDATMockDevice`** — *MockDeviceKit*, to exercise the flow **without
+     physical glasses** (useful for early wiring on the simulator/phone).
+   *(Confirm the exact delivery — SwiftPM vs `.xcframework` — and any required
+   entitlement in Meta's docs; don't guess it here.)*
+   > Audio does **not** need this SDK — the glasses are a Bluetooth audio device,
+   > so mic/speaker ride the standard `AVAudioSession` (see `docs/CAPTURE.md`).
+   > The DAT SDK is for the **camera**.
 2. **WebRTC:** **File ▸ Add Package Dependencies…**, paste
    `https://github.com/stasel/WebRTC`, add to **CodexLensApp**. This carries the
-   Realtime audio connection.
+   OpenAI Realtime audio connection.
 
 ## 4. Bring in the shell files
 

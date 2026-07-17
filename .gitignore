@@ -8,5 +8,5 @@ dist/
 DerivedData/
 
 # Xcode per-user state
-.swiftpm/xcode/
+.swiftpm/
 xcuserdata/
