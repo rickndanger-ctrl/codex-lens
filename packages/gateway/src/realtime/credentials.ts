@@ -55,15 +55,21 @@ export interface OpenAiRealtimeIssuerOptions {
   fetchImpl?: typeof fetch;
 }
 
-/** OpenAI's ephemeral-token response, parsed defensively (it may add fields). */
-const OpenAiSessionResponseSchema = z.looseObject({
-  id: nonEmptyString.optional(),
-  model: nonEmptyString.optional(),
-  client_secret: z.object({
-    value: nonEmptyString,
-    // Unix seconds, per OpenAI's realtime session response.
-    expires_at: z.number().int().positive(),
-  }),
+/**
+ * The 200 body of `POST /v1/realtime/client_secrets`: the ephemeral secret
+ * (`value`) and its `expires_at` (unix seconds) are top-level, with the created
+ * `session` (its id + resolved model) alongside. Parsed defensively — OpenAI may
+ * add fields.
+ */
+const OpenAiClientSecretResponseSchema = z.looseObject({
+  value: nonEmptyString,
+  expires_at: z.number().int().positive(),
+  session: z
+    .looseObject({
+      id: nonEmptyString.optional(),
+      model: nonEmptyString.optional(),
+    })
+    .optional(),
 });
 
 function errorMessage(error: unknown): string {
@@ -71,9 +77,10 @@ function errorMessage(error: unknown): string {
 }
 
 /**
- * A production issuer that exchanges the long-lived key for an ephemeral one
- * via OpenAI's realtime sessions endpoint. `fetchImpl` is injectable so this
- * is unit-tested against a stub — the live path is never exercised in tests.
+ * A production issuer that exchanges the long-lived key for a short-lived one
+ * via OpenAI's official ephemeral-credential endpoint,
+ * `POST /v1/realtime/client_secrets`. `fetchImpl` is injectable so this is
+ * unit-tested against a stub — the live path is never exercised in tests.
  */
 export function createOpenAiRealtimeIssuer(
   options: OpenAiRealtimeIssuerOptions,
@@ -88,21 +95,17 @@ export function createOpenAiRealtimeIssuer(
     }
     const model = request.model ?? defaultModel;
 
-    // TODO(wiring): OpenAI's official ephemeral-secret endpoint is
-    // `POST /v1/realtime/client_secrets`. This `/realtime/sessions` call + the
-    // defensive response parse below are a working default for tests; at deploy,
-    // align the exact path, request body, and response shape to OpenAI's
-    // client_secrets doc. The server-mint pattern itself (key stays here, phone
-    // gets only the ephemeral secret) is already correct.
     let response: Response;
     try {
-      response = await fetchImpl(`${baseUrl}/realtime/sessions`, {
+      response = await fetchImpl(`${baseUrl}/realtime/client_secrets`, {
         method: 'POST',
         headers: {
           authorization: `Bearer ${options.apiKey}`,
           'content-type': 'application/json',
         },
-        body: JSON.stringify({ model }),
+        // The client_secrets endpoint takes the session config it should mint a
+        // secret for; `type: 'realtime'` selects the speech-to-speech session.
+        body: JSON.stringify({ session: { type: 'realtime', model } }),
       });
     } catch (error) {
       return err('REALTIME_ISSUER_UNREACHABLE', errorMessage(error));
@@ -123,7 +126,7 @@ export function createOpenAiRealtimeIssuer(
       return err('REALTIME_ISSUER_BAD_RESPONSE', errorMessage(error));
     }
 
-    const parsed = OpenAiSessionResponseSchema.safeParse(body);
+    const parsed = OpenAiClientSecretResponseSchema.safeParse(body);
     if (!parsed.success) {
       return err(
         'REALTIME_ISSUER_BAD_RESPONSE',
@@ -132,10 +135,12 @@ export function createOpenAiRealtimeIssuer(
     }
 
     const credential = {
-      value: parsed.data.client_secret.value,
-      expiresAt: new Date(parsed.data.client_secret.expires_at * 1000).toISOString(),
-      model: parsed.data.model ?? model,
-      ...(parsed.data.id === undefined ? {} : { sessionId: parsed.data.id }),
+      value: parsed.data.value,
+      expiresAt: new Date(parsed.data.expires_at * 1000).toISOString(),
+      model: parsed.data.session?.model ?? model,
+      ...(parsed.data.session?.id === undefined
+        ? {}
+        : { sessionId: parsed.data.session.id }),
     };
 
     const validated = RealtimeCredentialSchema.safeParse(credential);

@@ -198,19 +198,21 @@ describe('createOpenAiRealtimeIssuer', () => {
       impl(String(input), init ?? {})) as unknown as typeof fetch;
   }
 
-  it('exchanges the long-lived key for an ephemeral one; the key never returns to the caller', async () => {
+  it('calls POST /v1/realtime/client_secrets and returns the ephemeral secret; the key never returns to the caller', async () => {
+    let sentUrl: string | undefined;
     let sentAuth: string | undefined;
     let sentBody: unknown;
     const issuer = createOpenAiRealtimeIssuer({
       apiKey: 'sk-long-lived-SECRET',
-      fetchImpl: stubFetch((_url, init) => {
+      fetchImpl: stubFetch((url, init) => {
+        sentUrl = url;
         sentAuth = (init.headers as Record<string, string>).authorization;
         sentBody = JSON.parse(String(init.body));
         return new Response(
           JSON.stringify({
-            id: 'sess_xyz',
-            model: 'gpt-realtime',
-            client_secret: { value: 'ek_ephemeral', expires_at: 1_784_000_000 },
+            value: 'ek_ephemeral',
+            expires_at: 1_784_000_000,
+            session: { id: 'sess_xyz', type: 'realtime', model: 'gpt-realtime' },
           }),
           { status: 200 },
         );
@@ -221,9 +223,11 @@ describe('createOpenAiRealtimeIssuer', () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
+    // The official endpoint, and the session config in the request body.
+    expect(sentUrl).toBe('https://api.openai.com/v1/realtime/client_secrets');
+    expect(sentBody).toEqual({ session: { type: 'realtime', model: 'gpt-realtime' } });
     // The long-lived key went upstream, never into the returned credential.
     expect(sentAuth).toBe('Bearer sk-long-lived-SECRET');
-    expect(sentBody).toEqual({ model: 'gpt-realtime' });
     expect(result.value.value).toBe('ek_ephemeral');
     expect(result.value.sessionId).toBe('sess_xyz');
     // 1_784_000_000 unix seconds, converted to ISO.
@@ -305,11 +309,11 @@ describe('createOpenAiRealtimeIssuer', () => {
     expect(result.error.code).toBe('REALTIME_ISSUER_REJECTED');
   });
 
-  it('rejects a 200 that omits client_secret', async () => {
+  it('rejects a 200 that omits the secret value', async () => {
     const issuer = createOpenAiRealtimeIssuer({
       apiKey: 'sk-x',
       fetchImpl: stubFetch(
-        () => new Response(JSON.stringify({ id: 'sess', model: 'gpt-realtime' }), { status: 200 }),
+        () => new Response(JSON.stringify({ session: { id: 'sess' } }), { status: 200 }),
       ),
     });
     const result = await issuer({});
@@ -318,13 +322,13 @@ describe('createOpenAiRealtimeIssuer', () => {
     expect(result.error.code).toBe('REALTIME_ISSUER_BAD_RESPONSE');
   });
 
-  it('rejects an empty client-secret value', async () => {
+  it('rejects an empty secret value', async () => {
     const issuer = createOpenAiRealtimeIssuer({
       apiKey: 'sk-x',
       fetchImpl: stubFetch(
         () =>
           new Response(
-            JSON.stringify({ client_secret: { value: '', expires_at: 1_784_000_000 } }),
+            JSON.stringify({ value: '', expires_at: 1_784_000_000 }),
             { status: 200 },
           ),
       ),
@@ -341,7 +345,7 @@ describe('createOpenAiRealtimeIssuer', () => {
       fetchImpl: stubFetch(
         () =>
           new Response(
-            JSON.stringify({ client_secret: { value: 'ek', expires_at: 0 } }),
+            JSON.stringify({ value: 'ek', expires_at: 0 }),
             { status: 200 },
           ),
       ),
@@ -352,15 +356,38 @@ describe('createOpenAiRealtimeIssuer', () => {
     expect(result.error.code).toBe('REALTIME_ISSUER_BAD_RESPONSE');
   });
 
-  it('falls back to the default model when the request omits one', async () => {
+  it('resolves the model from the response session, or the request when absent', async () => {
+    const issuer = createOpenAiRealtimeIssuer({
+      apiKey: 'sk-x',
+      fetchImpl: stubFetch(
+        () =>
+          new Response(
+            // No session.model echoed back — fall back to the requested model.
+            JSON.stringify({ value: 'ek', expires_at: 1_784_000_000 }),
+            { status: 200 },
+          ),
+      ),
+    });
+    const result = await issuer({ model: 'gpt-realtime-2.1' });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.model).toBe('gpt-realtime-2.1');
+  });
+
+  it('falls back to the default model and sends it in the session body', async () => {
     let sentModel: unknown;
     const issuer = createOpenAiRealtimeIssuer({
       apiKey: 'sk-x',
       defaultModel: 'gpt-realtime-default',
       fetchImpl: stubFetch((_url, init) => {
-        sentModel = (JSON.parse(String(init.body)) as { model: string }).model;
+        const body = JSON.parse(String(init.body)) as { session: { model: string } };
+        sentModel = body.session.model;
         return new Response(
-          JSON.stringify({ client_secret: { value: 'ek', expires_at: 1_784_000_000 } }),
+          JSON.stringify({
+            value: 'ek',
+            expires_at: 1_784_000_000,
+            session: { model: 'gpt-realtime-default' },
+          }),
           { status: 200 },
         );
       }),
