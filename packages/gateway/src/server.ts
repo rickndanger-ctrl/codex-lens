@@ -2,8 +2,13 @@ import Fastify, { type FastifyInstance } from 'fastify';
 
 import { registerAuth } from './auth/index.js';
 import { openDb, type Db } from './db/schema.js';
+import {
+  realtimeIssuerFromEnv,
+  type RealtimeCredentialIssuer,
+} from './realtime/credentials.js';
 import { registerHealthRoute } from './routes/health.js';
 import { registerProjectsRoute } from './routes/projects.js';
+import { registerRealtimeRoute } from './routes/realtime.js';
 import { registerTasksRoutes } from './routes/tasks.js';
 
 export const GATEWAY_VERSION = '0.0.0';
@@ -12,6 +17,12 @@ export interface BuildServerOptions {
   db?: Db;
   dbPath?: string;
   version?: string;
+  /**
+   * Mints short-lived OpenAI Realtime credentials. Injected for tests;
+   * otherwise built from OPENAI_API_KEY, and absent (route fails closed with
+   * 503) when no key is configured.
+   */
+  realtimeCredentialIssuer?: RealtimeCredentialIssuer;
 }
 
 const REDACTED_LOG_FIELDS = [
@@ -67,6 +78,10 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
   registerHealthRoute(server, options.version ?? GATEWAY_VERSION);
   registerProjectsRoute(server, db);
   registerTasksRoutes(server, db);
+  registerRealtimeRoute(
+    server,
+    options.realtimeCredentialIssuer ?? realtimeIssuerFromEnv(),
+  );
 
   server.get('/', async () => ({
     name: '@codex-lens/gateway',

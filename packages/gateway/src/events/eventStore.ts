@@ -90,8 +90,25 @@ export function appendEvent(
 }
 
 export function listEvents(db: Db, taskId: string): Result<CodexLensEvent[]> {
+  return listEventsAfter(db, taskId, -1);
+}
+
+/**
+ * The task's events with `seq` strictly greater than `afterSeq`, ordered.
+ * Passing -1 returns the whole log (events start at seq 0). A client streams
+ * progress by polling with the last seq it saw as the cursor, so it never
+ * re-reads events it already has.
+ */
+export function listEventsAfter(
+  db: Db,
+  taskId: string,
+  afterSeq: number,
+): Result<CodexLensEvent[]> {
   if (taskId.trim().length === 0) {
     return err('INVALID_TASK_ID', 'taskId must not be empty');
+  }
+  if (!Number.isInteger(afterSeq) || afterSeq < -1) {
+    return err('INVALID_EVENT_CURSOR', 'cursor must be an integer >= -1');
   }
 
   try {
@@ -99,10 +116,10 @@ export function listEvents(db: Db, taskId: string): Result<CodexLensEvent[]> {
       .prepare(
         `SELECT ${RETURNING_COLUMNS}
          FROM events
-         WHERE task_id = ?
+         WHERE task_id = ? AND seq > ?
          ORDER BY seq ASC`,
       )
-      .all(taskId) as EventRow[];
+      .all(taskId, afterSeq) as EventRow[];
 
     const events: CodexLensEvent[] = [];
     for (const row of rows) {

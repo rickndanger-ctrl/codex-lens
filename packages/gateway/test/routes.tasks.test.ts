@@ -327,5 +327,72 @@ describe('GET /v1/tasks/:taskId/events', () => {
       'log',
       'complete',
     ]);
+    // A full read reports the cursor to resume from.
+    expect(body).toHaveProperty('nextCursor', 4);
+  });
+
+  it('streams only events newer than the cursor and advances nextCursor', async () => {
+    const server = makeSeededServer();
+
+    const created = await postTask(server, {
+      projectId: SEEDED_PROJECT_ID,
+      idempotencyKey: nextIdempotencyKey(),
+    });
+    const createdTask = created.json() as Task;
+    await waitForTerminalState(server, createdTask.id);
+
+    // First page: everything, cursor advances to the last seq.
+    const first = await server.inject({
+      method: 'GET',
+      url: `/v1/tasks/${createdTask.id}/events`,
+      headers: AUTH_HEADERS,
+    });
+    const firstBody = first.json() as {
+      events: { seq: number }[];
+      nextCursor: number;
+    };
+    expect(firstBody.nextCursor).toBe(4);
+    expect(firstBody.events).toHaveLength(5);
+
+    // Polling from the tail returns nothing new and does not rewind.
+    const tail = await server.inject({
+      method: 'GET',
+      url: `/v1/tasks/${createdTask.id}/events?after=${String(firstBody.nextCursor)}`,
+      headers: AUTH_HEADERS,
+    });
+    const tailBody = tail.json() as {
+      events: { seq: number }[];
+      nextCursor: number;
+    };
+    expect(tailBody.events).toHaveLength(0);
+    expect(tailBody.nextCursor).toBe(4);
+
+    // A mid-stream cursor returns only the strictly-newer events.
+    const mid = await server.inject({
+      method: 'GET',
+      url: `/v1/tasks/${createdTask.id}/events?after=1`,
+      headers: AUTH_HEADERS,
+    });
+    const midBody = mid.json() as { events: { seq: number }[]; nextCursor: number };
+    expect(midBody.events.map((event) => event.seq)).toEqual([2, 3, 4]);
+    expect(midBody.nextCursor).toBe(4);
+  });
+
+  it('rejects a malformed cursor with 400', async () => {
+    const server = makeSeededServer();
+
+    const created = await postTask(server, {
+      projectId: SEEDED_PROJECT_ID,
+      idempotencyKey: nextIdempotencyKey(),
+    });
+    const createdTask = created.json() as Task;
+
+    const response = await server.inject({
+      method: 'GET',
+      url: `/v1/tasks/${createdTask.id}/events?after=not-a-number`,
+      headers: AUTH_HEADERS,
+    });
+
+    expect(response.statusCode).toBe(400);
   });
 });

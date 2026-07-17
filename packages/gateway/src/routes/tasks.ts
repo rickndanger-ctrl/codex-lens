@@ -3,7 +3,7 @@ import { z } from 'zod';
 
 import type { Db } from '../db/schema.js';
 import { CodexLensEventSchema } from '../events/event.js';
-import { listEvents } from '../events/eventStore.js';
+import { listEventsAfter } from '../events/eventStore.js';
 import {
   BoundaryBadRequestSchema,
   validateBoundary,
@@ -36,9 +36,25 @@ export const TaskParamsSchema = z
 
 export const TaskResponseSchema = TaskSchema;
 
+/**
+ * Optional `?after=<seq>` streams only events newer than a cursor. Omitted
+ * (or -1) returns the whole log. Fastify coerces the query string to an
+ * integer against this schema.
+ */
+export const TaskEventsQuerySchema = z
+  .object({
+    after: z.coerce.number().int().min(-1).optional(),
+  })
+  .strict();
+
+export type TaskEventsQuery = z.output<typeof TaskEventsQuerySchema>;
+
 export const TaskEventsResponseSchema = z
   .object({
     events: z.array(CodexLensEventSchema).readonly(),
+    // The cursor to pass as `after` next poll: the highest seq returned, or
+    // the incoming cursor when nothing is new (so it never rewinds).
+    nextCursor: z.number().int().min(-1),
   })
   .strict()
   .readonly();
@@ -225,6 +241,7 @@ export function registerTasksRoutes(server: FastifyInstance, db: Db): void {
     {
       schema: {
         params: jsonSchema(TaskParamsSchema),
+        querystring: jsonSchema(TaskEventsQuerySchema),
         response: {
           200: jsonSchema(TaskEventsResponseSchema),
           400: badRequestJsonSchema,
@@ -246,6 +263,19 @@ export function registerTasksRoutes(server: FastifyInstance, db: Db): void {
         });
       }
 
+      const query = validateBoundary(
+        TaskEventsQuerySchema,
+        request.query,
+        'INVALID_TASK_EVENTS_QUERY',
+      );
+      if (!query.ok) {
+        return reply.code(400).send({
+          statusCode: 400,
+          error: 'Bad Request',
+          message: query.error.message,
+        });
+      }
+
       const task = getTaskById(db, params.value.taskId);
       if (!task.ok) {
         if (task.error.code === 'TASK_NOT_FOUND') {
@@ -258,14 +288,18 @@ export function registerTasksRoutes(server: FastifyInstance, db: Db): void {
         throw new Error(task.error.message);
       }
 
-      const events = listEvents(db, params.value.taskId);
+      const cursor = query.value.after ?? -1;
+      const events = listEventsAfter(db, params.value.taskId, cursor);
       if (!events.ok) {
         throw new Error(events.error.message);
       }
 
+      const lastEvent = events.value.at(-1);
+      const nextCursor = lastEvent === undefined ? cursor : lastEvent.seq;
+
       const response = validateBoundary(
         TaskEventsResponseSchema,
-        { events: events.value },
+        { events: events.value, nextCursor },
         'INVALID_TASK_EVENTS_RESPONSE',
       );
       if (!response.ok) {

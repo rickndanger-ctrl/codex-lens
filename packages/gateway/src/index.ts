@@ -62,6 +62,7 @@ export {
   CodexLensEventSchema,
   appendEvent,
   listEvents,
+  listEventsAfter,
   parseCodexLensEvent,
 } from './events/index.js';
 export type { AppendEventInput, CodexLensEvent } from './events/index.js';
@@ -131,8 +132,29 @@ export type { ProjectsResponse } from './routes/projects.js';
 export {
   CreateTaskRequestSchema,
   TASKS_PATH,
+  TaskEventsQuerySchema,
   TaskEventsResponseSchema,
   TaskParamsSchema,
   TaskResponseSchema,
 } from './routes/tasks.js';
-export type { CreateTaskRequest, TaskEventsResponse } from './routes/tasks.js';
+export type {
+  CreateTaskRequest,
+  TaskEventsQuery,
+  TaskEventsResponse,
+} from './routes/tasks.js';
+export {
+  DEFAULT_REALTIME_MODEL,
+  OPENAI_API_KEY_ENV,
+  REALTIME_CREDENTIALS_PATH,
+  RealtimeCredentialRequestSchema,
+  RealtimeCredentialSchema,
+  createOpenAiRealtimeIssuer,
+  realtimeIssuerFromEnv,
+} from './realtime/credentials.js';
+export type {
+  OpenAiRealtimeIssuerOptions,
+  RealtimeCredential,
+  RealtimeCredentialIssuer,
+  RealtimeCredentialRequest,
+} from './realtime/credentials.js';
+export { registerRealtimeRoute } from './routes/realtime.js';

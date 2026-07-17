@@ -5,4 +5,4 @@ export {
   parseCodexLensEvent,
 } from './event.js';
 export type { AppendEventInput, CodexLensEvent } from './event.js';
-export { appendEvent, listEvents } from './eventStore.js';
+export { appendEvent, listEvents, listEventsAfter } from './eventStore.js';
