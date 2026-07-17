@@ -395,4 +395,42 @@ describe('GET /v1/tasks/:taskId/events', () => {
 
     expect(response.statusCode).toBe(400);
   });
+
+  it('rejects an out-of-range cursor (below -1) with 400', async () => {
+    const server = makeSeededServer();
+    const created = await postTask(server, {
+      projectId: SEEDED_PROJECT_ID,
+      idempotencyKey: nextIdempotencyKey(),
+    });
+    const createdTask = created.json() as Task;
+
+    const response = await server.inject({
+      method: 'GET',
+      url: `/v1/tasks/${createdTask.id}/events?after=-2`,
+      headers: AUTH_HEADERS,
+    });
+
+    expect(response.statusCode).toBe(400);
+  });
+
+  it('returns an empty page that echoes the cursor when it is past the end', async () => {
+    const server = makeSeededServer();
+    const created = await postTask(server, {
+      projectId: SEEDED_PROJECT_ID,
+      idempotencyKey: nextIdempotencyKey(),
+    });
+    const createdTask = created.json() as Task;
+    await waitForTerminalState(server, createdTask.id);
+
+    const response = await server.inject({
+      method: 'GET',
+      url: `/v1/tasks/${createdTask.id}/events?after=999`,
+      headers: AUTH_HEADERS,
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json() as { events: unknown[]; nextCursor: number };
+    expect(body.events).toHaveLength(0);
+    expect(body.nextCursor).toBe(999);
+  });
 });

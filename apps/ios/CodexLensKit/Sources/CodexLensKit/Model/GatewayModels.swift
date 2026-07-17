@@ -14,7 +14,9 @@ public enum TaskState: String, Codable, Sendable, CaseIterable {
     public var isTerminal: Bool { self == .complete || self == .failed }
 }
 
-public struct Task: Codable, Equatable, Sendable {
+/// A Codex run against an allowlisted project. Named `CodexTask` (not `Task`)
+/// so it never shadows Swift concurrency's `Task`.
+public struct CodexTask: Codable, Equatable, Sendable {
     public let id: String
     public let projectId: String
     public let state: TaskState

@@ -5,7 +5,11 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { openDb, type Db } from '../src/db/schema.js';
-import { appendEvent, listEvents } from '../src/events/eventStore.js';
+import {
+  appendEvent,
+  listEvents,
+  listEventsAfter,
+} from '../src/events/eventStore.js';
 
 const dbs = new Set<Db>();
 const tempDirs = new Set<string>();
@@ -127,5 +131,90 @@ describe('eventStore', () => {
     if (!result.ok) {
       expect(result.error.code).toBe('INVALID_CODEX_LENS_EVENT');
     }
+  });
+
+  describe('listEventsAfter (cursor)', () => {
+    const createdAt = '2026-07-14T12:00:00.000Z';
+
+    function seed(db: Db, taskId: string, count: number): void {
+      for (let index = 0; index < count; index += 1) {
+        mustSucceed(
+          appendEvent(db, {
+            id: `${taskId}-e${index}`,
+            taskId,
+            type: 'log',
+            payload: {},
+            createdAt,
+          }),
+        );
+      }
+    }
+
+    it('returns only events strictly newer than the cursor', () => {
+      const db = open(':memory:');
+      seed(db, 'task-1', 5); // seq 0..4
+      const after1 = mustSucceed(listEventsAfter(db, 'task-1', 1));
+      expect(after1.map((event) => event.seq)).toEqual([2, 3, 4]);
+    });
+
+    it('treats -1 as the whole log, identical to listEvents', () => {
+      const db = open(':memory:');
+      seed(db, 'task-1', 3);
+      expect(mustSucceed(listEventsAfter(db, 'task-1', -1)).map((e) => e.seq)).toEqual([0, 1, 2]);
+      expect(mustSucceed(listEvents(db, 'task-1')).map((e) => e.seq)).toEqual([0, 1, 2]);
+    });
+
+    it('returns empty when the cursor is at or beyond the last seq (replayed tail)', () => {
+      const db = open(':memory:');
+      seed(db, 'task-1', 3); // last seq = 2
+      expect(mustSucceed(listEventsAfter(db, 'task-1', 2))).toEqual([]);
+      // A replayed / over-shot cursor is harmless, not an error.
+      expect(mustSucceed(listEventsAfter(db, 'task-1', 99))).toEqual([]);
+    });
+
+    it('keeps concurrent task streams isolated, each with its own seq space', () => {
+      const db = open(':memory:');
+      seed(db, 'task-a', 3);
+      seed(db, 'task-b', 2);
+      const a = mustSucceed(listEventsAfter(db, 'task-a', -1));
+      const b = mustSucceed(listEventsAfter(db, 'task-b', -1));
+      expect(a.map((e) => e.seq)).toEqual([0, 1, 2]);
+      expect(b.map((e) => e.seq)).toEqual([0, 1]);
+      expect(a.every((e) => e.taskId === 'task-a')).toBe(true);
+      expect(b.every((e) => e.taskId === 'task-b')).toBe(true);
+      // A cursor into task-a (seq 0,1,2) returns only seq 2, never task-b.
+      expect(mustSucceed(listEventsAfter(db, 'task-a', 1)).map((e) => e.taskId)).toEqual([
+        'task-a',
+      ]);
+    });
+
+    it('rejects a cursor below -1 rather than silently coercing', () => {
+      const db = open(':memory:');
+      seed(db, 'task-1', 1);
+      const result = listEventsAfter(db, 'task-1', -2);
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error.code).toBe('INVALID_EVENT_CURSOR');
+      }
+    });
+
+    it('rejects a non-integer cursor', () => {
+      const db = open(':memory:');
+      seed(db, 'task-1', 1);
+      const result = listEventsAfter(db, 'task-1', 1.5);
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error.code).toBe('INVALID_EVENT_CURSOR');
+      }
+    });
+
+    it('rejects an empty taskId', () => {
+      const db = open(':memory:');
+      const result = listEventsAfter(db, '   ', 0);
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error.code).toBe('INVALID_TASK_ID');
+      }
+    });
   });
 });

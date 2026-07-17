@@ -20,9 +20,8 @@ public actor RealtimeSessionCoordinator {
         transport: RealtimeTransport,
         policy: ReconnectPolicy = ReconnectPolicy(),
         model: String? = nil,
-        // `_Concurrency.Task` — our `Task` model type shadows the bare name here.
         sleeper: @escaping @Sendable (TimeInterval) async -> Void = { seconds in
-            try? await _Concurrency.Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+            try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
         }
     ) {
         self.gateway = gateway

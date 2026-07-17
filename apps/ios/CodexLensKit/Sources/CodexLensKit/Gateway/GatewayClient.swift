@@ -48,16 +48,16 @@ public struct GatewayClient: Sendable {
         projectId: String,
         idempotencyKey: String,
         requestedPath: String? = nil
-    ) async throws -> Task {
+    ) async throws -> CodexTask {
         var body: [String: String] = ["projectId": projectId, "idempotencyKey": idempotencyKey]
         if let requestedPath { body["requestedPath"] = requestedPath }
         let request = try makeRequest(method: "POST", path: "/v1/tasks", jsonBody: body)
-        return try await perform(request, as: Task.self)
+        return try await perform(request, as: CodexTask.self)
     }
 
-    public func task(id: String) async throws -> Task {
+    public func task(id: String) async throws -> CodexTask {
         let request = try makeRequest(method: "GET", path: "/v1/tasks/\(escape(id))")
-        return try await perform(request, as: Task.self)
+        return try await perform(request, as: CodexTask.self)
     }
 
     /// One page of the event stream. Pass the last `nextCursor` you saw as

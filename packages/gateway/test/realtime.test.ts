@@ -159,6 +159,35 @@ describe('POST /v1/realtime/credentials', () => {
     expect(response.body).not.toContain('429');
     expect(response.body).not.toContain('upstream');
   });
+
+  it('serves concurrent credential requests independently', async () => {
+    let counter = 0;
+    const server = makeServer(async () => {
+      counter += 1;
+      return {
+        ok: true,
+        value: { ...CREDENTIAL, value: `ephemeral-${counter}` },
+      };
+    });
+
+    const responses = await Promise.all(
+      Array.from({ length: 5 }, async () =>
+        server.inject({
+          method: 'POST',
+          url: REALTIME_CREDENTIALS_PATH,
+          headers: AUTH_HEADERS,
+          payload: {},
+        }),
+      ),
+    );
+
+    const values = responses.map((response) => {
+      expect(response.statusCode).toBe(200);
+      return (response.json() as { value: string }).value;
+    });
+    // Each caller got its own credential; none were dropped or duplicated.
+    expect(new Set(values).size).toBe(5);
+  });
 });
 
 describe('createOpenAiRealtimeIssuer', () => {
@@ -246,6 +275,102 @@ describe('createOpenAiRealtimeIssuer', () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.error.code).toBe('REALTIME_ISSUER_UNREACHABLE');
+  });
+
+  it('maps an upstream 401 (bad long-lived key) to rejected, leaking nothing', async () => {
+    const issuer = createOpenAiRealtimeIssuer({
+      apiKey: 'sk-wrong',
+      fetchImpl: stubFetch(
+        () => new Response('{"error":{"message":"invalid api key"}}', { status: 401 }),
+      ),
+    });
+
+    const result = await issuer({});
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.code).toBe('REALTIME_ISSUER_REJECTED');
+    expect(result.error.message).not.toContain('invalid');
+    expect(result.error.message).not.toContain('sk-wrong');
+  });
+
+  it('maps an upstream 500 to rejected', async () => {
+    const issuer = createOpenAiRealtimeIssuer({
+      apiKey: 'sk-x',
+      fetchImpl: stubFetch(() => new Response('oops', { status: 500 })),
+    });
+    const result = await issuer({});
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.code).toBe('REALTIME_ISSUER_REJECTED');
+  });
+
+  it('rejects a 200 that omits client_secret', async () => {
+    const issuer = createOpenAiRealtimeIssuer({
+      apiKey: 'sk-x',
+      fetchImpl: stubFetch(
+        () => new Response(JSON.stringify({ id: 'sess', model: 'gpt-realtime' }), { status: 200 }),
+      ),
+    });
+    const result = await issuer({});
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.code).toBe('REALTIME_ISSUER_BAD_RESPONSE');
+  });
+
+  it('rejects an empty client-secret value', async () => {
+    const issuer = createOpenAiRealtimeIssuer({
+      apiKey: 'sk-x',
+      fetchImpl: stubFetch(
+        () =>
+          new Response(
+            JSON.stringify({ client_secret: { value: '', expires_at: 1_784_000_000 } }),
+            { status: 200 },
+          ),
+      ),
+    });
+    const result = await issuer({});
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.code).toBe('REALTIME_ISSUER_BAD_RESPONSE');
+  });
+
+  it('rejects a non-positive expires_at', async () => {
+    const issuer = createOpenAiRealtimeIssuer({
+      apiKey: 'sk-x',
+      fetchImpl: stubFetch(
+        () =>
+          new Response(
+            JSON.stringify({ client_secret: { value: 'ek', expires_at: 0 } }),
+            { status: 200 },
+          ),
+      ),
+    });
+    const result = await issuer({});
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.code).toBe('REALTIME_ISSUER_BAD_RESPONSE');
+  });
+
+  it('falls back to the default model when the request omits one', async () => {
+    let sentModel: unknown;
+    const issuer = createOpenAiRealtimeIssuer({
+      apiKey: 'sk-x',
+      defaultModel: 'gpt-realtime-default',
+      fetchImpl: stubFetch((_url, init) => {
+        sentModel = (JSON.parse(String(init.body)) as { model: string }).model;
+        return new Response(
+          JSON.stringify({ client_secret: { value: 'ek', expires_at: 1_784_000_000 } }),
+          { status: 200 },
+        );
+      }),
+    });
+
+    const result = await issuer({});
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(sentModel).toBe('gpt-realtime-default');
+    expect(result.value.model).toBe('gpt-realtime-default');
   });
 });
 
