@@ -6,3 +6,7 @@ dist/
 .build/
 *.xcodeproj
 DerivedData/
+
+# Xcode per-user state
+.swiftpm/xcode/
+xcuserdata/
