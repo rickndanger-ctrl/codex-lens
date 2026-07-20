@@ -1,7 +1,10 @@
 import { Ajv } from 'ajv';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { GATEWAY_TOKEN_ENV, unauthorizedResponseSchema } from '../src/auth/index.js';
+import {
+  GATEWAY_TOKEN_ENV,
+  unauthorizedResponseSchema,
+} from '../src/auth/index.js';
 import { GATEWAY_VERSION, buildServer } from '../src/server.js';
 
 const validateUnauthorizedBody = new Ajv().compile(unauthorizedResponseSchema);
