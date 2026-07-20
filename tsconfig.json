@@ -8,6 +8,6 @@
     "types": ["node"],
     "skipLibCheck": true
   },
-  "include": ["packages/**/*.ts"],
+  "include": ["packages/**/*.ts", "src/**/*.ts", "tests/**/*.ts"],
   "exclude": ["coverage", "dist", "node_modules"]
 }

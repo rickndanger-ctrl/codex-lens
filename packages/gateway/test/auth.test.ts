@@ -1,4 +1,4 @@
-import { Ajv } from 'ajv';
+import Ajv from 'ajv';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
@@ -7,7 +7,18 @@ import {
 } from '../src/auth/index.js';
 import { GATEWAY_VERSION, buildServer } from '../src/server.js';
 
-const validateUnauthorizedBody = new Ajv().compile(unauthorizedResponseSchema);
+type AjvConstructor = new () => {
+  compile(schema: object): (data: unknown) => boolean;
+};
+
+const AjvCompat = (
+  typeof Ajv === 'function'
+    ? Ajv
+    : (Ajv as unknown as { default: AjvConstructor }).default
+) as AjvConstructor;
+const validateUnauthorizedBody = new AjvCompat().compile(
+  unauthorizedResponseSchema,
+);
 
 const TEST_TOKEN = 'test-token-for-ticket-137';
 

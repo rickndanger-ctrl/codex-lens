@@ -26,16 +26,12 @@ describe('demo run-flow script', () => {
       env: { ...process.env, CODEX_LENS_DATA_DIR: dataDirectory },
     });
 
-    expect(stdout).toContain('ConversationSession: Draft -> Clarifying');
-    expect(stdout).toContain('ConversationSession: Clarifying -> ReadyForPlan');
-    expect(stdout).toContain(
-      'ConversationSession: ReadyForPlan -> ConvertedToEngineeringPlan',
-    );
-    expect(stdout).toContain('EngineeringPlan: Draft -> ReadyForApproval');
-    expect(stdout).toContain('EngineeringPlan: ReadyForApproval -> Approved');
-    expect(stdout).toMatch(
-      /EngineeringPlan Approved \(version=1, digest=[0-9a-f]{64}\)/,
-    );
+    expect(stdout).toContain('1. Conversation: ready for planning');
+    expect(stdout).toContain('2. Engineering Plan: ready for approval');
+    expect(stdout).toContain('3. Engineering approval: approved');
+    expect(stdout).toContain('4. Execution Plan: ready for approval');
+    expect(stdout).toContain('5. Execution approval: approved');
+    expect(stdout).toContain('6. Codex task: queued');
     expect(stdout.trim().endsWith('DEMO COMPLETE')).toBe(true);
   });
 });
