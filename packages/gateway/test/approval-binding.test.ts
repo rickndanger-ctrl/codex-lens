@@ -103,10 +103,35 @@ describe('assertExecutionApproved', () => {
       },
     });
 
+    expectFailure(plan, approval, 'EXECUTION_APPROVAL_TARGET_VERSION_MISMATCH');
+  });
+
+  it('rejects a stale version even when the content digest is unchanged', () => {
+    const plan = mustCreatePlan();
+    const approval = mustCreateApproval(plan, {
+      target: {
+        targetType: ApprovalTargetType.ExecutionPlan,
+        targetId: plan.executionPlanId,
+        targetVersion: plan.version + 1,
+        targetContentDigest: plan.contentDigest,
+      },
+    });
+
+    expectFailure(plan, approval, 'EXECUTION_APPROVAL_TARGET_VERSION_MISMATCH');
+  });
+
+  it('recomputes the plan digest instead of trusting its stored digest', () => {
+    const plan = mustCreatePlan();
+    const approval = mustCreateApproval(plan);
+    const editedPlan = {
+      ...plan,
+      implementationSteps: ['Run unapproved implementation steps'],
+    } as ExecutionPlan;
+
     expectFailure(
-      plan,
+      editedPlan,
       approval,
-      'EXECUTION_APPROVAL_TARGET_VERSION_MISMATCH',
+      'EXECUTION_APPROVAL_TARGET_CONTENT_DIGEST_MISMATCH',
     );
   });
 
@@ -130,11 +155,7 @@ describe('assertExecutionApproved', () => {
       },
     });
 
-    expectFailure(
-      plan,
-      approval,
-      'EXECUTION_APPROVAL_TARGET_TYPE_MISMATCH',
-    );
+    expectFailure(plan, approval, 'EXECUTION_APPROVAL_TARGET_TYPE_MISMATCH');
   });
 
   it('rejects an approval for a different execution plan id', () => {

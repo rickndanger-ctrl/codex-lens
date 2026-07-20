@@ -211,9 +211,7 @@ describe('transitionConversationSession', () => {
 
       expect(result.ok).toBe(false);
       if (result.ok) return;
-      expect(result.error.code).toBe(
-        'ILLEGAL_CONVERSATION_SESSION_TRANSITION',
-      );
+      expect(result.error.code).toBe('ILLEGAL_CONVERSATION_SESSION_TRANSITION');
       expect(session).toEqual(snapshot);
       expect(session.conversationStatus).toBe(from);
     },
@@ -234,6 +232,42 @@ describe('transitionConversationSession', () => {
     expect(result.value.conversationId).toBe(session.conversationId);
     expect(result.value.openQuestions).toEqual(session.openQuestions);
     expect(session.updatedAt).toBe('2026-07-14T10:00:00.000Z');
+  });
+
+  it('returns an error instead of throwing when the update date is invalid', () => {
+    vi.useFakeTimers();
+    const session = makeAnsweredSession('Draft');
+    vi.setSystemTime(Number.NaN);
+
+    expect(() =>
+      transitionConversationSession(session, 'Clarifying'),
+    ).not.toThrow();
+    const result = transitionConversationSession(session, 'Clarifying');
+
+    expect(result).toEqual({
+      ok: false,
+      error: {
+        code: 'INVALID_CONVERSATION_SESSION_DATE',
+        message: 'Current time is not a valid date',
+      },
+    });
+  });
+
+  it('returns an error instead of throwing when the session contains an invalid date', () => {
+    const session = {
+      ...makeAnsweredSession('Draft'),
+      updatedAt: '2026-02-30T10:00:00.000Z',
+    } as ConversationSession;
+
+    expect(() =>
+      transitionConversationSession(session, 'Clarifying'),
+    ).not.toThrow();
+    const result = transitionConversationSession(session, 'Clarifying');
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.code).toBe('INVALID_CONVERSATION_SESSION');
+    expect(result.error.message).toContain('updatedAt');
   });
 
   it('rejects transition into ReadyForPlan while a question has no answer', () => {

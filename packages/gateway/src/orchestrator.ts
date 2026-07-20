@@ -42,8 +42,8 @@ import { runTests, type TestRun } from './test-runner.js';
  * The plan an issuer is handed is a frozen deep copy, not the plan that runs.
  * The threat is an issuer that approves the plan it is shown and then edits
  * that object into another one — widening `expectedCommands` or the file lists
- * after the digest it signed was read, since the binding check compares the
- * digest field rather than recomputing it. `createExecutionPlan` already
+ * after the digest it signed was read. The binding check recomputes the digest,
+ * and `createExecutionPlan` already
  * returns a frozen plan, so today the attempt throws either way; handing over a
  * copy and freezing it here is what stops that from being a property this
  * module merely inherits from a schema in another package and would lose

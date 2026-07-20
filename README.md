@@ -42,7 +42,7 @@ An Execution Plan is the concrete, machine-oriented counterpart to an approved E
 
 An Approval Contract records a human decision about a specific target: who approved, when, why (notes), and exactly what was approved — the target's type (`EngineeringPlan` or `ExecutionPlan`), id, version, and content digest. Pinning the version and digest means an approval is only valid for the exact content that was reviewed. Its lifecycle starts at `Pending` and resolves once, to `Approved`, `Rejected`, or `Cancelled` — all terminal states, from which no further transitions are allowed.
 
-These models meet at the authorization gate (`authorization.ts`): `createExecutionPlanFromApproval` will only mint an Execution Plan from an Approval Contract that is `Approved`, targets the right Engineering Plan, and matches its current version and content digest.
+These models meet at authorization gates in the shared model and gateway. Every gate checks the target type and id, requires the target's current version, and recomputes its digest from current content instead of trusting the stored digest. `createExecutionPlanFromApproval` only mints an Execution Plan after those checks, and the gateway repeats them immediately before starting a Codex edit.
 
 ## Gateway and the M3 vertical slice
 

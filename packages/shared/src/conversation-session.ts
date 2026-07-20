@@ -37,7 +37,41 @@ const conversationSessionContentSchema = z.object({
   conversationStatus: z.enum(CONVERSATION_STATUSES),
 });
 
-const isoDateTime = z.iso.datetime({ offset: true });
+function isValidIsoDateTime(value: string): boolean {
+  const dateParts = /^(\d{4})-(\d{2})-(\d{2})T/.exec(value);
+  if (!dateParts) return false;
+
+  const year = Number(dateParts[1]);
+  const month = Number(dateParts[2]);
+  const day = Number(dateParts[3]);
+  const leapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const daysInMonth = [
+    31,
+    leapYear ? 29 : 28,
+    31,
+    30,
+    31,
+    30,
+    31,
+    31,
+    30,
+    31,
+    30,
+    31,
+  ];
+
+  return (
+    day > 0 &&
+    day <= (daysInMonth[month - 1] ?? 0) &&
+    !Number.isNaN(Date.parse(value))
+  );
+}
+
+const isoDateTime = z.iso
+  .datetime({ offset: true })
+  .refine(isValidIsoDateTime, {
+    message: 'must be a valid ISO-8601 date-time',
+  });
 
 export const ConversationSessionSchema = conversationSessionContentSchema
   .extend({
@@ -87,6 +121,17 @@ function immutableSession(
   });
 }
 
+function currentTimestamp(): Result<string> {
+  try {
+    return ok(new Date().toISOString());
+  } catch {
+    return err(
+      'INVALID_CONVERSATION_SESSION_DATE',
+      'Current time is not a valid date',
+    );
+  }
+}
+
 export function createConversationSession(
   input: CreateConversationSessionInput,
 ): Result<ConversationSession> {
@@ -95,7 +140,9 @@ export function createConversationSession(
     return err('INVALID_CONVERSATION_SESSION', formatIssues(parsedInput.error));
   }
 
-  const now = new Date().toISOString();
+  const timestamp = currentTimestamp();
+  if (!timestamp.ok) return timestamp;
+  const now = timestamp.value;
   const parsed = ConversationSessionSchema.safeParse({
     ...parsedInput.data,
     conversationId: parsedInput.data.conversationId ?? randomUUID(),
@@ -133,6 +180,14 @@ export function transitionConversationSession(
   session: ConversationSession,
   targetStatus: ConversationStatus,
 ): Result<ConversationSession> {
+  const validatedSession = ConversationSessionSchema.safeParse(session);
+  if (!validatedSession.success) {
+    return err(
+      'INVALID_CONVERSATION_SESSION',
+      formatIssues(validatedSession.error),
+    );
+  }
+
   const currentStatus = session.conversationStatus;
 
   if (TERMINAL_STATUSES.has(currentStatus)) {
@@ -160,11 +215,16 @@ export function transitionConversationSession(
     );
   }
 
-  return ok(
-    immutableSession({
-      ...session,
-      conversationStatus: targetStatus,
-      updatedAt: new Date().toISOString(),
-    }),
-  );
+  const timestamp = currentTimestamp();
+  if (!timestamp.ok) return timestamp;
+  const updated = ConversationSessionSchema.safeParse({
+    ...session,
+    conversationStatus: targetStatus,
+    updatedAt: timestamp.value,
+  });
+  if (!updated.success) {
+    return err('INVALID_CONVERSATION_SESSION', formatIssues(updated.error));
+  }
+
+  return ok(immutableSession(updated.data));
 }

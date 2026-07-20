@@ -2,6 +2,7 @@ import {
   ApprovalStatus,
   ApprovalTargetType,
   err,
+  executionPlanContentDigest,
   ok,
   type ApprovalContract,
   type ExecutionPlan,
@@ -44,10 +45,11 @@ export function assertExecutionApproved(
     );
   }
 
-  if (approval.target.targetContentDigest !== plan.contentDigest) {
+  const currentContentDigest = executionPlanContentDigest(plan);
+  if (approval.target.targetContentDigest !== currentContentDigest) {
     return err(
       'EXECUTION_APPROVAL_TARGET_CONTENT_DIGEST_MISMATCH',
-      'Approval target content digest does not match the execution plan content digest',
+      'Approval target content digest does not match the digest recomputed from the current execution plan content',
     );
   }
 

@@ -369,11 +369,34 @@ describe('runVerticalSlice', () => {
         error: {
           code: 'EXECUTION_APPROVAL_TARGET_CONTENT_DIGEST_MISMATCH',
           message:
-            'Approval target content digest does not match the execution plan content digest',
+            'Approval target content digest does not match the digest recomputed from the current execution plan content',
         },
       });
       expect(client.methods).toEqual([]);
       expect(await readFixture()).toBe(before);
+    },
+    TIMEOUT_MS,
+  );
+
+  it(
+    'refuses a stale-version approval before creating a Codex task',
+    async () => {
+      const client = createFakeClient({
+        edits: [{ path: CALCULATOR, content: FIXED_CALCULATOR }],
+      });
+
+      const result = await runVerticalSlice({
+        request: request(),
+        repoId: SAMPLE_REPO_ID,
+        approval: (plan) => approvalFor({ ...plan, version: plan.version + 1 }),
+        client,
+      });
+
+      expect(result).toMatchObject({
+        ok: false,
+        error: { code: 'EXECUTION_APPROVAL_TARGET_VERSION_MISMATCH' },
+      });
+      expect(client.methods).toEqual([]);
     },
     TIMEOUT_MS,
   );

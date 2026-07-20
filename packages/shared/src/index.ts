@@ -51,6 +51,7 @@ export type {
 } from './engineering-plan.js';
 export {
   createExecutionPlan,
+  executionPlanContentDigest,
   ESTIMATE_LEVELS,
   EXECUTION_STATUSES,
   executionPlanSchema,

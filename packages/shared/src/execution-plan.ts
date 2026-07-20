@@ -42,6 +42,21 @@ const contentFieldsSchema = z.object({
   executionStatus: z.enum(EXECUTION_STATUSES),
 });
 
+type ExecutionPlanContent = z.output<typeof contentFieldsSchema>;
+
+function planContent(plan: ExecutionPlanContent): ExecutionPlanContent {
+  return Object.fromEntries(
+    Object.keys(contentFieldsSchema.shape).map((key) => [
+      key,
+      plan[key as keyof ExecutionPlanContent],
+    ]),
+  ) as unknown as ExecutionPlanContent;
+}
+
+export function executionPlanContentDigest(plan: ExecutionPlanContent): string {
+  return contentDigest(planContent(plan));
+}
+
 export const executionPlanSchema = contentFieldsSchema
   .extend({
     executionPlanId: z.uuid(),
@@ -61,15 +76,19 @@ const createExecutionPlanInputSchema = contentFieldsSchema
   })
   .strict();
 
-export type CreateExecutionPlanInput = z.input<typeof createExecutionPlanInputSchema>;
+export type CreateExecutionPlanInput = z.input<
+  typeof createExecutionPlanInputSchema
+>;
 
 export type ExecutionPlanJson = {
-  -readonly [K in keyof ExecutionPlan]: ExecutionPlan[K] extends readonly (infer E)[]
-    ? E[]
-    : ExecutionPlan[K];
+  -readonly [
+    K in keyof ExecutionPlan
+  ]: ExecutionPlan[K] extends readonly (infer E)[] ? E[] : ExecutionPlan[K];
 };
 
-const allowedTransitions: Readonly<Record<ExecutionStatus, readonly ExecutionStatus[]>> = {
+const allowedTransitions: Readonly<
+  Record<ExecutionStatus, readonly ExecutionStatus[]>
+> = {
   Pending: ['Ready'],
   Ready: ['Running'],
   Running: ['Blocked', 'Complete', 'Failed'],
@@ -84,7 +103,9 @@ function formatIssues(error: z.ZodError): string {
     .join('; ');
 }
 
-export function createExecutionPlan(input: CreateExecutionPlanInput): Result<ExecutionPlan> {
+export function createExecutionPlan(
+  input: CreateExecutionPlanInput,
+): Result<ExecutionPlan> {
   const parsedInput = createExecutionPlanInputSchema.safeParse(input);
   if (!parsedInput.success) {
     return err('EXECUTION_PLAN_INVALID_INPUT', formatIssues(parsedInput.error));
@@ -96,7 +117,7 @@ export function createExecutionPlan(input: CreateExecutionPlanInput): Result<Exe
     version: 1,
     createdAt: now,
     updatedAt: now,
-    contentDigest: contentDigest(parsedInput.data),
+    contentDigest: executionPlanContentDigest(parsedInput.data),
   });
   if (!parsed.success) {
     return err('EXECUTION_PLAN_INVALID', formatIssues(parsed.error));
@@ -109,11 +130,7 @@ export function parseExecutionPlan(json: unknown): Result<ExecutionPlan> {
   if (!parsed.success) {
     return err('EXECUTION_PLAN_INVALID', formatIssues(parsed.error));
   }
-  const contentKeys = Object.keys(contentFieldsSchema.shape) as (keyof z.output<
-    typeof contentFieldsSchema
-  >)[];
-  const content = Object.fromEntries(contentKeys.map((key) => [key, parsed.data[key]]));
-  if (contentDigest(content) !== parsed.data.contentDigest) {
+  if (executionPlanContentDigest(parsed.data) !== parsed.data.contentDigest) {
     return err(
       'EXECUTION_PLAN_DIGEST_MISMATCH',
       'contentDigest does not match the content fields',
@@ -149,7 +166,7 @@ export function transitionExecutionPlan(
     ...plan,
     executionStatus: toStatus,
     updatedAt,
-    contentDigest: contentDigest(content),
+    contentDigest: executionPlanContentDigest(content as ExecutionPlanContent),
   });
   if (!parsed.success) {
     return err('EXECUTION_PLAN_INVALID', formatIssues(parsed.error));
