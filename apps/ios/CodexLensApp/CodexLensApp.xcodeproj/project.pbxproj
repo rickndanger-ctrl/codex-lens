@@ -1,0 +1,326 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 60;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		110000000000000000000001 /* CodexLensApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 120000000000000000000001 /* CodexLensApp.swift */; };
+		110000000000000000000002 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 120000000000000000000002 /* ContentView.swift */; };
+		110000000000000000000003 /* SessionViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 120000000000000000000003 /* SessionViewModel.swift */; };
+		110000000000000000000004 /* WebRTCRealtimeTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 120000000000000000000004 /* WebRTCRealtimeTransport.swift */; };
+		110000000000000000000005 /* MetaGlassesCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 120000000000000000000005 /* MetaGlassesCapture.swift */; };
+		110000000000000000000006 /* CodexLensKit in Frameworks */ = {isa = PBXBuildFile; productRef = 190000000000000000000001 /* CodexLensKit */; };
+		110000000000000000000007 /* WebRTC in Frameworks */ = {isa = PBXBuildFile; productRef = 190000000000000000000004 /* WebRTC */; };
+		110000000000000000000008 /* MWDATCore in Frameworks */ = {isa = PBXBuildFile; productRef = 190000000000000000000006 /* MWDATCore */; };
+		110000000000000000000009 /* MWDATCamera in Frameworks */ = {isa = PBXBuildFile; productRef = 190000000000000000000007 /* MWDATCamera */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		120000000000000000000001 /* CodexLensApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexLensApp.swift; sourceTree = "<group>"; };
+		120000000000000000000002 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		120000000000000000000003 /* SessionViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionViewModel.swift; sourceTree = "<group>"; };
+		120000000000000000000004 /* WebRTCRealtimeTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebRTCRealtimeTransport.swift; sourceTree = "<group>"; };
+		120000000000000000000005 /* MetaGlassesCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MetaGlassesCapture.swift; sourceTree = "<group>"; };
+		120000000000000000000006 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		120000000000000000000007 /* CodexLensApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = CodexLensApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		130000000000000000000001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				110000000000000000000006 /* CodexLensKit in Frameworks */,
+				110000000000000000000007 /* WebRTC in Frameworks */,
+				110000000000000000000008 /* MWDATCore in Frameworks */,
+				110000000000000000000009 /* MWDATCamera in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		140000000000000000000001 = {
+			isa = PBXGroup;
+			children = (
+				140000000000000000000002 /* CodexLensApp */,
+				140000000000000000000003 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		140000000000000000000002 /* CodexLensApp */ = {
+			isa = PBXGroup;
+			children = (
+				120000000000000000000001 /* CodexLensApp.swift */,
+				120000000000000000000002 /* ContentView.swift */,
+				120000000000000000000003 /* SessionViewModel.swift */,
+				120000000000000000000004 /* WebRTCRealtimeTransport.swift */,
+				120000000000000000000005 /* MetaGlassesCapture.swift */,
+				120000000000000000000006 /* Info.plist */,
+			);
+			name = CodexLensApp;
+			sourceTree = "<group>";
+		};
+		140000000000000000000003 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				120000000000000000000007 /* CodexLensApp.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		150000000000000000000001 /* CodexLensApp */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 180000000000000000000002 /* Build configuration list for PBXNativeTarget "CodexLensApp" */;
+			buildPhases = (
+				170000000000000000000001 /* Sources */,
+				130000000000000000000001 /* Frameworks */,
+				170000000000000000000002 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = CodexLensApp;
+			packageProductDependencies = (
+				190000000000000000000001 /* CodexLensKit */,
+				190000000000000000000004 /* WebRTC */,
+				190000000000000000000006 /* MWDATCore */,
+				190000000000000000000007 /* MWDATCamera */,
+			);
+			productName = CodexLensApp;
+			productReference = 120000000000000000000007 /* CodexLensApp.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		160000000000000000000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2660;
+				LastUpgradeCheck = 2660;
+				TargetAttributes = {
+					150000000000000000000001 = {
+						CreatedOnToolsVersion = 26.6;
+					};
+				};
+			};
+			buildConfigurationList = 180000000000000000000001 /* Build configuration list for PBXProject "CodexLensApp" */;
+			compatibilityVersion = "Xcode 15.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = 140000000000000000000001;
+			packageReferences = (
+				190000000000000000000002 /* XCLocalSwiftPackageReference "../CodexLensKit" */,
+				190000000000000000000003 /* XCRemoteSwiftPackageReference "WebRTC" */,
+				190000000000000000000005 /* XCRemoteSwiftPackageReference "MetaWearablesDAT" */,
+			);
+			productRefGroup = 140000000000000000000003 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				150000000000000000000001 /* CodexLensApp */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		170000000000000000000002 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		170000000000000000000001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				110000000000000000000001 /* CodexLensApp.swift in Sources */,
+				110000000000000000000002 /* ContentView.swift in Sources */,
+				110000000000000000000003 /* SessionViewModel.swift in Sources */,
+				110000000000000000000004 /* WebRTCRealtimeTransport.swift in Sources */,
+				110000000000000000000005 /* MetaGlassesCapture.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		1A0000000000000000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		1A0000000000000000000002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				COPY_PHASE_STRIP = YES;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+			};
+			name = Release;
+		};
+		1A0000000000000000000003 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CODE_SIGN_ENTITLEMENTS = CodexLensApp.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 7FQA384X2F;
+				INFOPLIST_FILE = Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.2;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				META_APP_ID = 0;
+				META_CLIENT_TOKEN = 0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.richardholguin.CodexLensApp;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		1A0000000000000000000004 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CODE_SIGN_ENTITLEMENTS = CodexLensApp.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 7FQA384X2F;
+				INFOPLIST_FILE = Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.2;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				META_APP_ID = 0;
+				META_CLIENT_TOKEN = 0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.richardholguin.CodexLensApp;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		180000000000000000000001 /* Build configuration list for PBXProject "CodexLensApp" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				1A0000000000000000000001 /* Debug */,
+				1A0000000000000000000002 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		180000000000000000000002 /* Build configuration list for PBXNativeTarget "CodexLensApp" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				1A0000000000000000000003 /* Debug */,
+				1A0000000000000000000004 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		190000000000000000000002 /* XCLocalSwiftPackageReference "../CodexLensKit" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../CodexLensKit;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		190000000000000000000003 /* XCRemoteSwiftPackageReference "WebRTC" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/stasel/WebRTC";
+			requirement = {
+				kind = exactVersion;
+				version = 150.0.0;
+			};
+		};
+		190000000000000000000005 /* XCRemoteSwiftPackageReference "MetaWearablesDAT" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/facebook/meta-wearables-dat-ios";
+			requirement = {
+				kind = exactVersion;
+				version = 0.9.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		190000000000000000000001 /* CodexLensKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 190000000000000000000002 /* XCLocalSwiftPackageReference "../CodexLensKit" */;
+			productName = CodexLensKit;
+		};
+		190000000000000000000004 /* WebRTC */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 190000000000000000000003 /* XCRemoteSwiftPackageReference "WebRTC" */;
+			productName = WebRTC;
+		};
+		190000000000000000000006 /* MWDATCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 190000000000000000000005 /* XCRemoteSwiftPackageReference "MetaWearablesDAT" */;
+			productName = MWDATCore;
+		};
+		190000000000000000000007 /* MWDATCamera */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 190000000000000000000005 /* XCRemoteSwiftPackageReference "MetaWearablesDAT" */;
+			productName = MWDATCamera;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = 160000000000000000000001 /* Project object */;
+}

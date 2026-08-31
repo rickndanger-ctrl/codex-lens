@@ -1,12 +1,15 @@
 node_modules/
 coverage/
 dist/
+.DS_Store
+work/
 
 # Swift
 .build/
-*.xcodeproj
 DerivedData/
 
 # Xcode per-user state
 .swiftpm/
 xcuserdata/
+**/*.xcodeproj/xcuserdata/
+**/*.xcodeproj/project.xcworkspace/xcuserdata/

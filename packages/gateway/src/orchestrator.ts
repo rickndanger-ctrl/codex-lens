@@ -55,15 +55,10 @@ export type ExecutionApprovalIssuer = (
 
 export type ExecutionApproval = ApprovalContract | ExecutionApprovalIssuer;
 
-export interface VerticalSliceOptions {
-  /** The requested change, as the requester wrote it. */
-  request: ExecutionPlanRequest;
+interface SliceExecutionOptions {
   /** Registry id of the editable repo the change targets. */
   repoId: string;
-  /**
-   * The approval authorizing this execution, or an issuer that grants one for
-   * the generated plan. Omitted means unapproved, which stops the run.
-   */
+  /** The approval authorizing this execution. */
   approval?: ExecutionApproval;
   client: AppServerHandle;
   /** Existing Codex thread to continue. Omitted starts a fresh thread. */
@@ -72,6 +67,20 @@ export interface VerticalSliceOptions {
   codexOptions?: CodexClientOptions;
   /** Wall-clock budget for the verification run. */
   testTimeoutMs?: number;
+  /** Exact user follow-up for a resumed, already-approved plan. */
+  followUpInstruction?: string;
+  /** Called once the real Codex thread id is known. */
+  onThreadReady?: (threadId: string) => void | Promise<void>;
+}
+
+export interface VerticalSliceOptions extends SliceExecutionOptions {
+  /** The requested change, as the requester wrote it. */
+  request: ExecutionPlanRequest;
+}
+
+export interface PreparedVerticalSliceOptions extends SliceExecutionOptions {
+  /** An already-generated execution plan loaded from trusted gateway storage. */
+  plan: ExecutionPlan;
 }
 
 export interface VerticalSliceReport {
@@ -284,7 +293,7 @@ async function editAndVerify(
   plan: ExecutionPlan,
   command: string,
   sandbox: SandboxHandle,
-  options: VerticalSliceOptions,
+  options: SliceExecutionOptions,
 ): Promise<Result<VerticalSliceReport>> {
   const thread =
     options.threadId === undefined
@@ -300,13 +309,23 @@ async function editAndVerify(
   if (!thread.ok) {
     return thread;
   }
+  try {
+    await options.onThreadReady?.(thread.value.threadId);
+  } catch (error) {
+    return err('THREAD_BINDING_FAILED', errorMessage(error));
+  }
 
   const applied = await applyEdit(
     options.client,
     thread.value.threadId,
     plan,
     sandbox,
-    options.codexOptions,
+    {
+      ...options.codexOptions,
+      ...(options.followUpInstruction === undefined
+        ? {}
+        : { followUpInstruction: options.followUpInstruction }),
+    },
   );
   if (!applied.ok) {
     return applied;
@@ -434,6 +453,38 @@ export async function runVerticalSlice(
   }
 
   return cleanUpAfterFailure(sandbox, report.error);
+}
+
+/**
+ * Executes one exact plan previously generated and persisted by the gateway.
+ * The plan is never regenerated, so the approval digest the user reviewed is
+ * the same digest that controls file scope and verification here.
+ */
+export async function runPreparedVerticalSlice(
+  options: PreparedVerticalSliceOptions,
+): Promise<Result<VerticalSliceReport>> {
+  const plan = deepFreeze(structuredClone(options.plan)) as ExecutionPlan;
+  const contract = await resolveApproval(options.approval, plan);
+  if (!contract.ok) return contract;
+  const approved = assertExecutionApproved(plan, contract.value);
+  if (!approved.ok) return approved;
+
+  const command = assertPlanExecutable(plan);
+  if (!command.ok) return command;
+  const session = await initialize(options.client, options.codexOptions);
+  if (!session.ok) return session;
+  const prepared = await prepareSandbox(options.repoId);
+  if (!prepared.ok) return prepared;
+
+  const report = await editAndVerify(
+    plan,
+    command.value,
+    prepared.value,
+    options,
+  );
+  return report.ok
+    ? report
+    : cleanUpAfterFailure(prepared.value, report.error);
 }
 
 /**

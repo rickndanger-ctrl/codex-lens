@@ -1,7 +1,14 @@
 import { err, ok, type Result } from '@codex-lens/shared';
 import { z } from 'zod';
 
-export const TASK_STATES = ['queued', 'running', 'complete', 'failed'] as const;
+export const TASK_STATES = [
+  'queued',
+  'running',
+  'paused',
+  'complete',
+  'failed',
+  'cancelled',
+] as const;
 
 export type TaskState = (typeof TASK_STATES)[number];
 

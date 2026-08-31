@@ -1,3 +1,4 @@
+import { type Result } from '@codex-lens/shared';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 
@@ -11,7 +12,15 @@ import {
 import { resolveWorkingDir } from '../registry/pathSafety.js';
 import { getProjectById } from '../registry/registry.js';
 import { runMockTask } from '../runner/mockRunner.js';
+import { runCodexTask } from '../runner/codexRunner.js';
+import {
+  getPreparedExecutionPlan,
+  type PreparedExecutionPlan,
+} from '../execution-plan-store.js';
+import type { RegistryRecord } from '../registry/projectRegistry.js';
 import { TaskSchema } from '../tasks/task.js';
+import type { Task } from '../tasks/task.js';
+import { bindTaskRun } from '../tasks/taskRunStore.js';
 import { createTask, getTaskById } from '../tasks/taskStore.js';
 
 export const TASKS_PATH = '/v1/tasks';
@@ -23,6 +32,8 @@ export const CreateTaskRequestSchema = z
     projectId: nonEmptyString,
     idempotencyKey: nonEmptyString,
     requestedPath: z.string().min(1).optional(),
+    executionPlanId: nonEmptyString.optional(),
+    executionPlanDigest: z.string().regex(/^[0-9a-f]{64}$/u).optional(),
   })
   .strict();
 
@@ -86,7 +97,23 @@ const notFoundJsonSchema = jsonSchema(TaskNotFoundSchema);
 const unprocessableJsonSchema = jsonSchema(TaskUnprocessableSchema);
 const taskJsonSchema = jsonSchema(TaskResponseSchema);
 
-export function registerTasksRoutes(server: FastifyInstance, db: Db): void {
+export type TaskRunner = (
+  db: Db,
+  task: Task,
+  project: RegistryRecord,
+  prepared?: PreparedExecutionPlan,
+) => Promise<Result<unknown>>;
+
+const defaultTaskRunner: TaskRunner = async (db, task, project, prepared) =>
+  prepared === undefined
+    ? runMockTask(db, task, project)
+    : runCodexTask(db, task, project, prepared);
+
+export function registerTasksRoutes(
+  server: FastifyInstance,
+  db: Db,
+  taskRunner: TaskRunner = defaultTaskRunner,
+): void {
   server.post(
     TASKS_PATH,
     {
@@ -145,6 +172,39 @@ export function registerTasksRoutes(server: FastifyInstance, db: Db): void {
         });
       }
 
+      const hasExecutionPlanId = body.value.executionPlanId !== undefined;
+      const hasExecutionPlanDigest = body.value.executionPlanDigest !== undefined;
+      if (hasExecutionPlanId !== hasExecutionPlanDigest) {
+        return reply.code(400).send({
+          statusCode: 400,
+          error: 'Bad Request',
+          message: 'executionPlanId and executionPlanDigest must be supplied together.',
+        });
+      }
+
+      let prepared: PreparedExecutionPlan | undefined;
+      if (body.value.executionPlanId !== undefined && body.value.executionPlanDigest !== undefined) {
+        const loaded = getPreparedExecutionPlan(db, body.value.executionPlanId);
+        if (!loaded.ok) {
+          return reply.code(422).send({
+            statusCode: 422,
+            error: 'Unprocessable Entity',
+            message: loaded.error.message,
+          });
+        }
+        if (
+          loaded.value.projectId !== project.value.id ||
+          loaded.value.plan.contentDigest !== body.value.executionPlanDigest
+        ) {
+          return reply.code(422).send({
+            statusCode: 422,
+            error: 'Unprocessable Entity',
+            message: 'Execution plan id, digest, and project do not match the stored reviewed plan.',
+          });
+        }
+        prepared = loaded.value;
+      }
+
       const task = createTask(db, {
         projectId: body.value.projectId,
         idempotencyKey: body.value.idempotencyKey,
@@ -152,13 +212,28 @@ export function registerTasksRoutes(server: FastifyInstance, db: Db): void {
       if (!task.ok) {
         throw new Error(task.error.message);
       }
+      if (prepared !== undefined) {
+        const bound = bindTaskRun(
+          db,
+          task.value.id,
+          prepared.plan.executionPlanId,
+          prepared.plan.contentDigest,
+        );
+        if (!bound.ok) {
+          return reply.code(422).send({
+            statusCode: 422,
+            error: 'Unprocessable Entity',
+            message: bound.error.message,
+          });
+        }
+      }
 
       // Only a freshly created task is still queued; an idempotent replay
       // returns a task the runner already claimed, so it is not re-run. The
       // claim inside runMockTask makes an accidental double kick harmless.
       if (task.value.state === 'queued') {
         const created = task.value;
-        void runMockTask(db, created, project.value)
+        void taskRunner(db, created, project.value, prepared)
           .then((run) => {
             if (!run.ok) {
               request.log.error(

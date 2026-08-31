@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>$(DEVELOPMENT_LANGUAGE)</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>$(PRODUCT_NAME)</string>
+	<key>CFBundleDisplayName</key>
+	<string>Codex Lens</string>
+	<key>CFBundlePackageType</key>
+	<string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
+	<key>CFBundleShortVersionString</key>
+	<string>$(MARKETING_VERSION)</string>
+	<key>CFBundleVersion</key>
+	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLName</key>
+			<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>codexlens</string>
+			</array>
+		</dict>
+	</array>
+	<key>LSRequiresIPhoneOS</key>
+	<true/>
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<string>fb-viewapp</string>
+	</array>
+	<key>NSCameraUsageDescription</key>
+	<string>Codex Lens keeps the glasses camera connection ready while the assistant is active and captures a still image only when you ask.</string>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>Codex Lens connects to your supported glasses and Bluetooth audio devices.</string>
+	<key>NSBluetoothPeripheralUsageDescription</key>
+	<string>Codex Lens connects to Meta glasses for camera access.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Codex Lens connects privately to the approved Mac gateway and to your glasses over Wi-Fi.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_bonjour._tcp</string>
+	</array>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Codex Lens uses the glasses microphone for voice conversation.</string>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+	<key>MWDAT</key>
+	<dict>
+		<key>AppLinkURLScheme</key>
+		<string>codexlens://</string>
+		<key>MetaAppID</key>
+		<string>$(META_APP_ID)</string>
+		<key>ClientToken</key>
+		<string>$(META_CLIENT_TOKEN)</string>
+		<key>TeamID</key>
+		<string>$(DEVELOPMENT_TEAM)</string>
+		<key>Analytics</key>
+		<dict>
+			<key>OptOut</key>
+			<true/>
+		</dict>
+	</dict>
+	<key>UIApplicationSceneManifest</key>
+	<dict>
+		<key>UIApplicationSupportsMultipleScenes</key>
+		<false/>
+	</dict>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>audio</string>
+		<string>bluetooth-central</string>
+		<string>bluetooth-peripheral</string>
+		<string>external-accessory</string>
+	</array>
+	<key>UISupportedExternalAccessoryProtocols</key>
+	<array>
+		<string>com.meta.ar.wearable</string>
+	</array>
+	<key>UILaunchScreen</key>
+	<dict/>
+	<key>UISupportedInterfaceOrientations</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+</dict>
+</plist>

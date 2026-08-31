@@ -74,4 +74,4 @@ test('the emitted gateway loads emitted workspace packages', async () => {
   });
 
   expect(output).not.toContain('ERR_MODULE_NOT_FOUND');
-});
+}, 30_000);

@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MockInstance } from 'vitest';
 
 import { GATEWAY_TOKEN_ENV } from '../src/auth/index.js';
-import { GATEWAY_HOST, start } from '../src/index.js';
+import { GATEWAY_DB_PATH_ENV, GATEWAY_HOST, start } from '../src/index.js';
 import { buildServer } from '../src/server.js';
 
 const TEST_TOKEN = 'security-posture-test-token';
@@ -41,7 +41,7 @@ const EXPECTED_ROUTES = [
 
 const MUTATING_METHODS = ['POST', 'PUT', 'PATCH', 'DELETE'] as const;
 
-const FORBIDDEN_ROUTE_WORDS = /commit|push|deploy|exec|shell/i;
+const FORBIDDEN_ROUTE_WORDS = /(?:^|[\s/])(?:commit|push|deploy|exec|shell)(?=$|[\s/(])/i;
 
 describe('route surface', () => {
   it('registers exactly the expected routes', async () => {
@@ -57,6 +57,9 @@ describe('route surface', () => {
     }
 
     const routeTree = server.printRoutes({ commonPrefix: false });
+    expect('/v1/computer/execute').not.toMatch(FORBIDDEN_ROUTE_WORDS);
+    expect('/v1/exec').toMatch(FORBIDDEN_ROUTE_WORDS);
+    expect('/v1/shell').toMatch(FORBIDDEN_ROUTE_WORDS);
     expect(routeTree).not.toMatch(FORBIDDEN_ROUTE_WORDS);
   });
 
@@ -121,8 +124,18 @@ describe('localhost-only posture', () => {
     >;
     listenSpy.mockResolvedValue('http://127.0.0.1:0');
 
-    await start(() => server);
+    const originalDbPath = process.env[GATEWAY_DB_PATH_ENV];
+    process.env[GATEWAY_DB_PATH_ENV] = '/tmp/codex-lens-start-test.sqlite';
+    const createServer = vi.fn(() => server);
 
+    try {
+      await start(createServer);
+    } finally {
+      if (originalDbPath === undefined) delete process.env[GATEWAY_DB_PATH_ENV];
+      else process.env[GATEWAY_DB_PATH_ENV] = originalDbPath;
+    }
+
+    expect(createServer).toHaveBeenCalledWith({ dbPath: '/tmp/codex-lens-start-test.sqlite' });
     expect(listenSpy).toHaveBeenCalledTimes(1);
     const [options] = listenSpy.mock.calls[0] ?? [];
     expect(options).toMatchObject({ host: '127.0.0.1' });
@@ -165,6 +178,8 @@ describe('no external network or shell access in gateway source', () => {
   // the argv. Adding a fourth entry is a posture change.
   const SPAWN_ALLOWLIST = new Set([
     path.join('codex', 'transport.ts'),
+    path.join('computer', 'codexComputer.ts'),
+    path.join('messages', 'messages.ts'),
     'test-runner.ts',
     'sandbox.ts',
   ]);

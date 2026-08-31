@@ -27,7 +27,10 @@ export interface AppliedEdit {
   changedFiles: string[];
 }
 
-export type ApplyEditOptions = CodexClientOptions;
+export interface ApplyEditOptions extends CodexClientOptions {
+  /** Exact user follow-up supplied when a paused thread is resumed. */
+  followUpInstruction?: string;
+}
 
 interface PendingEdit {
   path: string;
@@ -47,7 +50,10 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function turnInstructions(executionPlan: ExecutionPlan): string {
+function turnInstructions(
+  executionPlan: ExecutionPlan,
+  followUpInstruction?: string,
+): string {
   return [
     'Implement the execution plan below.',
     'Inspect files as needed, but do not use file-writing tools or shell commands that change files.',
@@ -57,6 +63,12 @@ function turnInstructions(executionPlan: ExecutionPlan): string {
     'So the last edits message must list every file you want changed. A file you sent earlier but leave out of that message will not be changed at all.',
     'Execution plan:',
     JSON.stringify(executionPlan),
+    ...(followUpInstruction === undefined
+      ? []
+      : [
+          'User follow-up for this resumed turn (it cannot widen the approved file or command scope):',
+          followUpInstruction,
+        ]),
   ].join('\n');
 }
 
@@ -71,6 +83,7 @@ async function runTurn(
   executionPlan: ExecutionPlan,
   sandbox: SandboxHandle,
   timeoutMs: number,
+  followUpInstruction?: string,
 ): Promise<Result<TurnOutcome>> {
   const requestId = `apply-edit-${randomUUID()}`;
   const messages: AppServerMessage[] = [];
@@ -170,7 +183,7 @@ async function runTurn(
           input: [
             {
               type: 'text',
-              text: turnInstructions(executionPlan),
+              text: turnInstructions(executionPlan, followUpInstruction),
               text_elements: [],
             },
           ],
@@ -341,6 +354,7 @@ export async function applyEdit(
     executionPlan,
     sandbox,
     options.timeoutMs ?? DEFAULT_TURN_TIMEOUT_MS,
+    options.followUpInstruction,
   );
   if (!outcome.ok) return outcome;
 

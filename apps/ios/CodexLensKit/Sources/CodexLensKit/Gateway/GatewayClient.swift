@@ -42,7 +42,34 @@ public struct GatewayClient: Sendable {
         return try await perform(request, as: RealtimeCredential.self)
     }
 
+    // MARK: - Live public web research
+
+    public func researchWeb(question: String) async throws -> WebResearchResult {
+        let request = try makeRequest(
+            method: "POST",
+            path: "/v1/web/research",
+            jsonBody: ["question": question]
+        )
+        return try await perform(request, as: WebResearchResult.self)
+    }
+
     // MARK: - Tasks
+
+    /// Loads only the repositories and policy flags allowlisted by the Mac.
+    public func approvedProjects() async throws -> ApprovedProjectsResponse {
+        let request = try makeRequest(method: "GET", path: "/v1/projects")
+        return try await perform(request, as: ApprovedProjectsResponse.self)
+    }
+
+    /// Asks Codex to inspect one gateway-approved repository without editing it.
+    public func inspectCodexProject(projectId: String, question: String) async throws -> CodexProjectInspection {
+        let request = try makeRequest(
+            method: "POST",
+            path: "/v1/codex/inspect",
+            jsonBody: ["projectId": projectId, "question": question]
+        )
+        return try await perform(request, as: CodexProjectInspection.self)
+    }
 
     public func createTask(
         projectId: String,
@@ -67,6 +94,114 @@ public struct GatewayClient: Sendable {
         if let after { path += "?after=\(after)" }
         let request = try makeRequest(method: "GET", path: path)
         return try await perform(request, as: TaskEventsPage.self)
+    }
+
+    // MARK: - Computer inspection
+
+    /// Reads only the frontmost Mac application name through the sub-second
+    /// macOS fast path. It does not capture the screen or start Computer Use.
+    public func frontmostComputerApp() async throws -> FrontmostComputerApp {
+        let request = try makeRequest(method: "GET", path: "/v1/computer/frontmost")
+        return try await perform(request, as: FrontmostComputerApp.self)
+    }
+
+    /// Asks the Mac gateway for one read-only accessibility inspection.
+    public func inspectComputer(app: String, question: String) async throws -> ComputerInspection {
+        let request = try makeRequest(
+            method: "POST",
+            path: "/v1/computer/inspect",
+            jsonBody: ["app": app, "question": question]
+        )
+        return try await perform(request, as: ComputerInspection.self)
+    }
+
+    /// Runs one ordinary, reversible voice-directed Mac or browser action.
+    /// Consequential steps are refused by the gateway and must use the bound
+    /// prepare/readback/confirm path below.
+    public func useComputerAction(
+        instruction: String,
+        surface: String = "auto"
+    ) async throws -> ComputerActionResult {
+        let request = try makeRequest(
+            method: "POST",
+            path: "/v1/computer/use",
+            jsonBody: ["instruction": instruction, "surface": surface]
+        )
+        return try await perform(request, as: ComputerActionResult.self)
+    }
+
+    /// Binds one exact Mac/Chrome instruction without executing it.
+    public func prepareComputerAction(
+        instruction: String,
+        surface: String = "auto"
+    ) async throws -> PreparedComputerAction {
+        let request = try makeRequest(
+            method: "POST",
+            path: "/v1/computer/prepare",
+            jsonBody: ["instruction": instruction, "surface": surface]
+        )
+        return try await perform(request, as: PreparedComputerAction.self)
+    }
+
+    /// Consumes one exact prepared action after the phone verifies a later
+    /// spoken confirmation. Never retry automatically after an uncertain call.
+    public func executePreparedComputerAction(
+        confirmationId: String,
+        digest: String
+    ) async throws -> ComputerActionResult {
+        let request = try makeRequest(
+            method: "POST",
+            path: "/v1/computer/execute",
+            jsonBody: ["confirmationId": confirmationId, "digest": digest]
+        )
+        return try await perform(request, as: ComputerActionResult.self)
+    }
+
+    // MARK: - Confirmation-gated Messages
+
+    /// Resolves a contact and prepares an exact preview. This never sends.
+    public func prepareTextMessage(
+        recipient: String,
+        message: String,
+        serviceType: MessageServiceType
+    ) async throws -> PreparedTextMessage {
+        let request = try makeRequest(
+            method: "POST",
+            path: "/v1/messages/prepare",
+            jsonBody: [
+                "recipient": recipient,
+                "message": message,
+                "serviceType": serviceType.rawValue,
+            ]
+        )
+        return try await perform(request, as: PreparedTextMessage.self)
+    }
+
+    /// Sends only the exact, unexpired preview identified by this bound pair.
+    public func sendPreparedText(confirmationId: String, digest: String) async throws -> SentTextMessage {
+        let request = try makeRequest(
+            method: "POST",
+            path: "/v1/messages/send",
+            jsonBody: ["confirmationId": confirmationId, "digest": digest]
+        )
+        return try await perform(request, as: SentTextMessage.self)
+    }
+
+    /// Reads the durable, redacted outcome of one message intent. This never
+    /// retries a send and never returns the message body.
+    public func textMessageStatus(confirmationId: String) async throws -> MessageIntentStatus {
+        let request = try makeRequest(
+            method: "GET",
+            path: "/v1/messages/\(escape(confirmationId))/status"
+        )
+        return try await perform(request, as: MessageIntentStatus.self)
+    }
+
+    /// Checks Contacts permission and enabled/connected Messages services.
+    /// This is read-only and cannot send.
+    public func textMessageReadiness() async throws -> MessageReadiness {
+        let request = try makeRequest(method: "GET", path: "/v1/messages/readiness")
+        return try await perform(request, as: MessageReadiness.self)
     }
 
     // MARK: - Internals

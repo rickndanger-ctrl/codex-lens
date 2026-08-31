@@ -1,9 +1,12 @@
 # Codex Lens — On-Device Build & Test Walkthrough (Ray-Ban Meta glasses)
 
+> **Current-state notice (2026-08-26):** This walkthrough is stale and remains only as historical setup guidance. Do not use its test counts, TODO list, capture-rate assumptions, or capability claims as the current build state. See [../../../docs/BUILD_LOG.md](../../../docs/BUILD_LOG.md) for verified behavior and remaining physical-device gates.
+
 A click-by-click guide to building the iPhone app and testing it with **Ray-Ban
 Meta glasses**. No prior iOS experience assumed. Everything here is the part that
 **cannot** be verified without hardware; the logic it uses (`CodexLensKit`) is
-already tested (`swift test`, 27 tests green).
+currently covered by 52 passing Swift tests. Use `docs/BUILD_LOG.md` for the
+latest physical-device evidence rather than treating that count as hardware proof.
 
 ## The device model
 
@@ -26,7 +29,8 @@ document is the checklist for filling it in and confirming it on hardware.
 ## Confirmed — no longer open questions
 
 Resolved against OpenAI's official Realtime docs and the VisionClaw reference
-(see `docs/CAPTURE.md`). No Meta/OpenAI SDK calls are written in our Swift.
+(see `docs/CAPTURE.md`). The current app now contains the native Meta camera and
+OpenAI Realtime WebRTC implementations; the remaining items below are historical.
 
 - **Model:** `gpt-realtime-2.1` (GA Realtime, speech-to-speech with reasoning).
 - **Transport:** **WebRTC** — OpenAI's recommended path for mobile clients that
@@ -141,7 +145,7 @@ project (add to target **CodexLensApp**, "Copy items if needed" OFF):
    - **Privacy - Microphone Usage Description** →
      `Codex Lens uses the glasses microphone for voice conversation.`
    - **Privacy - Camera Usage Description** →
-     `Codex Lens captures visual context from the glasses only when you choose to.`
+     `Codex Lens keeps the glasses camera connection ready while the assistant is active and captures a still image only when you ask.`
 2. Target ▸ **Signing & Capabilities** ▸ **+ Capability** ▸ **Background Modes**
    ▸ check **Audio, AirPlay, and Picture in Picture**.
 3. **Add whatever entitlement / Info.plist keys the Meta toolkit requires**

@@ -12,6 +12,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json && node scripts/prepare-build.mjs",
     "demo": "node --import tsx src/demo/text-vertical-slice.ts",
+    "messages:readiness": "npm run build && node dist/packages/gateway/src/messages/readinessCli.js",
     "slice": "npm run slice -w @codex-lens/gateway --",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",

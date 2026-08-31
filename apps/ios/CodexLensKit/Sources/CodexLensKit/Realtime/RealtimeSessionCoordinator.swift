@@ -14,6 +14,10 @@ public actor RealtimeSessionCoordinator {
 
     private var machine: RealtimeSessionMachine
     private var credential: RealtimeCredential?
+    private var shouldRun = false
+    private var runGeneration: UInt = 0
+    private var isTransportConnectInProgress = false
+    private var transportConnectWaiters: [CheckedContinuation<Void, Never>] = []
 
     public init(
         gateway: GatewayClient,
@@ -37,12 +41,20 @@ public actor RealtimeSessionCoordinator {
     /// Establish the session: mint a credential and open the transport.
     @discardableResult
     public func start() async -> RealtimeState {
+        runGeneration &+= 1
+        let generation = runGeneration
+        shouldRun = true
+        machine = RealtimeSessionMachine(policy: policy)
         machine.handle(.connect)
         do {
             let credential = try await mintCredential()
-            try await transport.connect(using: credential)
+            guard isCurrentRun(generation) else { return machine.state }
+            guard try await establishTransport(using: credential, generation: generation) else {
+                return machine.state
+            }
             machine.handle(.connectionEstablished)
         } catch {
+            guard isCurrentRun(generation) else { return machine.state }
             machine.handle(.fail(reason: reason(from: error)))
         }
         return machine.state
@@ -52,14 +64,24 @@ public actor RealtimeSessionCoordinator {
     /// credential when needed, and retry until connected or the policy gives up.
     @discardableResult
     public func connectionLost(reason: String) async -> RealtimeState {
+        guard shouldRun else { return machine.state }
+        let generation = runGeneration
         machine.handle(.connectionLost(reason: reason))
         while case .reconnecting(_, let retryAfter) = machine.state {
             await sleeper(retryAfter)
+            guard isCurrentRun(generation), !Task.isCancelled else { return machine.state }
             do {
-                let credential = try await mintCredential(forceRefresh: false)
-                try await transport.connect(using: credential)
+                // Realtime WebRTC client secrets are single-use. Any new SDP
+                // connection attempt must mint a fresh credential even when
+                // the previous secret has not reached its expiry timestamp.
+                let credential = try await mintCredential(forceRefresh: true)
+                guard isCurrentRun(generation), !Task.isCancelled else { return machine.state }
+                guard try await establishTransport(using: credential, generation: generation) else {
+                    return machine.state
+                }
                 machine.handle(.connectionEstablished)
             } catch {
+                guard isCurrentRun(generation), !Task.isCancelled else { return machine.state }
                 machine.handle(.connectionLost(reason: self.reason(from: error)))
             }
         }
@@ -67,8 +89,10 @@ public actor RealtimeSessionCoordinator {
     }
 
     public func stop() async {
-        await transport.disconnect()
+        shouldRun = false
+        runGeneration &+= 1
         machine.handle(.disconnect)
+        await transport.disconnect()
     }
 
     // MARK: - Internals
@@ -84,10 +108,53 @@ public actor RealtimeSessionCoordinator {
         return fresh
     }
 
+    /// `actor` isolation is reentrant across `await`, so two calls to `start()`
+    /// can otherwise enter `transport.connect` at the same time. A stale first
+    /// attempt can then disconnect the newer peer. Serialize the entire
+    /// connect-and-stale-cleanup operation so replacement sessions cannot tear
+    /// each other down.
+    private func establishTransport(
+        using credential: RealtimeCredential,
+        generation: UInt
+    ) async throws -> Bool {
+        await acquireTransportConnectSlot()
+        defer { releaseTransportConnectSlot() }
+
+        guard isCurrentRun(generation), !Task.isCancelled else { return false }
+        try await transport.connect(using: credential)
+        guard isCurrentRun(generation), !Task.isCancelled else {
+            await transport.disconnect()
+            return false
+        }
+        return true
+    }
+
+    private func acquireTransportConnectSlot() async {
+        if !isTransportConnectInProgress {
+            isTransportConnectInProgress = true
+            return
+        }
+        await withCheckedContinuation { continuation in
+            transportConnectWaiters.append(continuation)
+        }
+    }
+
+    private func releaseTransportConnectSlot() {
+        guard !transportConnectWaiters.isEmpty else {
+            isTransportConnectInProgress = false
+            return
+        }
+        transportConnectWaiters.removeFirst().resume()
+    }
+
     private func reason(from error: Error) -> String {
         if let gatewayError = error as? GatewayError {
             return String(describing: gatewayError)
         }
         return error.localizedDescription
+    }
+
+    private func isCurrentRun(_ generation: UInt) -> Bool {
+        shouldRun && generation == runGeneration
     }
 }

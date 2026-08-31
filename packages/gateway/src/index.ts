@@ -5,12 +5,16 @@ import { buildServer } from './server.js';
 export { assertExecutionApproved } from './approval-binding.js';
 
 export const GATEWAY_HOST = '127.0.0.1';
+export const GATEWAY_DB_PATH_ENV = 'CODEX_LENS_DB_PATH';
 const DEFAULT_PORT = 8787;
 
 export async function start(
   createServer: typeof buildServer = buildServer,
 ): Promise<void> {
-  const server = createServer();
+  const dbPath = process.env[GATEWAY_DB_PATH_ENV];
+  const server = createServer({
+    ...(dbPath === undefined || dbPath.trim() === '' ? {} : { dbPath }),
+  });
   const port = Number.parseInt(
     process.env.CODEX_LENS_PORT ?? `${DEFAULT_PORT}`,
     10,

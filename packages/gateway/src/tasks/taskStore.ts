@@ -32,9 +32,11 @@ const TASK_COLUMNS = `
 
 const VALID_TRANSITIONS: Readonly<Record<TaskState, readonly TaskState[]>> = {
   queued: ['running'],
-  running: ['complete', 'failed'],
+  running: ['paused', 'complete', 'failed', 'cancelled'],
+  paused: ['running', 'cancelled'],
   complete: [],
   failed: [],
+  cancelled: [],
 };
 
 function rowToTask(row: TaskRow): Result<Task> {

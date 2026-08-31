@@ -1,6 +1,8 @@
 # codex-lens
 
-Shared, validated domain models for a plan-and-approve engineering workflow, plus a local-only gateway that drives a real Codex edit through those models. There is no iPhone app yet, and nothing here is exposed off the local machine: the gateway binds to loopback only.
+Codex Lens is a native iPhone and Ray-Ban Meta interface for a safety-bound Codex workflow. It combines a Realtime voice conversation, explicit glasses still capture with on-device OCR, direct read-only inspection of an approved project by Codex, a tailnet-only Mac gateway, persistent repository tasks, and policy-bound Mac control. Ordinary reversible Mac and UI actions execute directly. Consequential actions stop for exact confirmation of the specific action, target, and content. Siri remains the glasses messaging path. The gateway itself binds to loopback; private remote access is provided by Tailscale Serve.
+
+The physical iPhone app lives at `apps/ios/CodexLensApp/CodexLensApp.xcodeproj`. Current verified device state and remaining acceptance gates are recorded in [docs/BUILD_LOG.md](docs/BUILD_LOG.md).
 
 ## Repo layout
 
@@ -47,6 +49,8 @@ These models meet at authorization gates in the shared model and gateway. Every 
 ## Gateway and the M3 vertical slice
 
 `packages/gateway` is a loopback-only Fastify gateway, and it hosts the M3 vertical slice: one real Codex edit driven end to end — request → generated execution plan → approval check → edit → verification — against a deliberately broken sample fixture, inside a disposable sandbox.
+
+The iPhone can also ask the home Mac to inspect the currently selected approved project through `POST /v1/codex/inspect`. That path is read-only, network-disabled, constrained to the gateway allowlist, and returns a verified summary plus relative file paths. It does not authorize edits, commits, pushes, or deployment.
 
 ```sh
 npm run slice -- "Fix add so it returns the sum of both numbers"

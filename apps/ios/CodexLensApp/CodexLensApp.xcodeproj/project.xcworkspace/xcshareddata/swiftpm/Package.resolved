@@ -1,0 +1,24 @@
+{
+  "originHash" : "a16d1951046642aa02c94abbbcbb427e78c5781392888e5edf49fafbbea0db83",
+  "pins" : [
+    {
+      "identity" : "meta-wearables-dat-ios",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/facebook/meta-wearables-dat-ios",
+      "state" : {
+        "revision" : "9b1b83d791dfebff7afd452e924a256819094b64",
+        "version" : "0.9.0"
+      }
+    },
+    {
+      "identity" : "webrtc",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/stasel/WebRTC",
+      "state" : {
+        "revision" : "6ed87f05368632f71dc95c89c14c051561710925",
+        "version" : "150.0.0"
+      }
+    }
+  ],
+  "version" : 3
+}

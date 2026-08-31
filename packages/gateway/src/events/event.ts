@@ -5,8 +5,10 @@ export const CODEX_LENS_EVENT_TYPES = [
   'queued',
   'running',
   'log',
+  'paused',
   'complete',
   'failed',
+  'cancelled',
 ] as const;
 
 const nonEmptyString = z.string().trim().min(1);

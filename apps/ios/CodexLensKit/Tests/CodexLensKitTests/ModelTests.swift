@@ -98,10 +98,27 @@ final class ModelTests: XCTestCase {
     }
 
     func testToolDefinitionsEncodeAsFunctions() throws {
-        let data = try JSONEncoder().encode(CodexLensTools.startTask)
+        let data = try JSONEncoder().encode(CodexLensTools.inspectMacApp)
         let object = try JSONSerialization.jsonObject(with: data) as? [String: Any]
         XCTAssertEqual(object?["type"] as? String, "function")
-        XCTAssertEqual(object?["name"] as? String, "start_task")
-        XCTAssertEqual(CodexLensTools.all.count, 2)
+        XCTAssertEqual(object?["name"] as? String, "inspect_mac_app")
+        XCTAssertEqual(CodexLensTools.all.count, 9)
+        XCTAssertEqual(CodexLensTools.researchWeb.name, "research_web")
+        XCTAssertEqual(CodexLensTools.getFrontmostMacApp.name, "get_frontmost_mac_app")
+        XCTAssertEqual(CodexLensTools.inspectMacApp.name, "inspect_mac_app")
+        XCTAssertEqual(CodexLensTools.inspectCodexProject.name, "inspect_codex_project")
+        XCTAssertEqual(CodexLensTools.useMacComputer.name, "use_mac_computer")
+        XCTAssertEqual(CodexLensTools.prepareMacComputerAction.name, "prepare_mac_computer_action")
+        XCTAssertEqual(CodexLensTools.executePreparedMacAction.name, "execute_prepared_mac_action")
+        XCTAssertEqual(CodexLensTools.captureGlassesView.name, "capture_glasses_view")
+        XCTAssertEqual(CodexLensTools.prepareTextMessage.name, "prepare_text_message")
+        XCTAssertEqual(CodexLensTools.sendPreparedText.name, "send_prepared_text")
+        XCTAssertEqual(CodexLensTools.getCurrentTime.name, "get_current_time")
+        XCTAssertTrue(CodexLensTools.all.contains { $0.name == "get_current_time" })
+        XCTAssertTrue(CodexLensTools.all.contains { $0.name == "research_web" })
+        XCTAssertTrue(CodexLensTools.all.contains { $0.name == "get_frontmost_mac_app" })
+        XCTAssertTrue(CodexLensTools.all.contains { $0.name == "inspect_codex_project" })
+        XCTAssertFalse(CodexLensTools.all.contains { $0.name == "prepare_text_message" })
+        XCTAssertFalse(CodexLensTools.all.contains { $0.name == "send_prepared_text" })
     }
 }
