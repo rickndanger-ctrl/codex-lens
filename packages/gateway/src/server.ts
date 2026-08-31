@@ -15,8 +15,10 @@ import { registerExecutionPlanRoutes } from './routes/execution-plans.js';
 import type { TaskRunner } from './routes/tasks.js';
 import { registerComputerRoutes } from './routes/computer.js';
 import type {
+  ComputerAppFocuser,
   ComputerController,
   ComputerInspector,
+  ComputerWindowCloser,
   FrontmostComputerAppReader,
 } from './computer/codexComputer.js';
 import { registerMessageRoutes } from './routes/messages.js';
@@ -41,6 +43,10 @@ export interface BuildServerOptions {
   computerInspector?: ComputerInspector;
   /** Reads only the active Mac app name without starting a model. */
   frontmostComputerAppReader?: FrontmostComputerAppReader;
+  /** Opens or activates one named Mac app through the deterministic fast path. */
+  computerAppFocuser?: ComputerAppFocuser;
+  /** Closes only the current main window and never resolves save dialogs. */
+  computerWindowCloser?: ComputerWindowCloser;
   /** Operates Mac apps and Chrome for an explicit user-directed task. */
   computerController?: ComputerController;
   /** Resolves, prepares, and confirmation-gates Messages sends. */
@@ -128,6 +134,8 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
     options.computerController,
     undefined,
     options.frontmostComputerAppReader,
+    options.computerAppFocuser,
+    options.computerWindowCloser,
   );
   registerMessageRoutes(
     server,

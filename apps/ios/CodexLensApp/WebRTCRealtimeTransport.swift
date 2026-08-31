@@ -1039,6 +1039,7 @@ final class WebRTCRealtimeTransport: NSObject, RealtimeTransport, @unchecked Sen
             )
             if decision == .ignore("conversation ending") {
                 let endingItemWasTracked = conversationItemIDSet.contains(itemId)
+                cancelActiveResponsesForConversationEndLocked()
                 resetConversationContext()
                 if !endingItemWasTracked {
                     try? deleteConversationItem(itemId)
@@ -1238,6 +1239,25 @@ final class WebRTCRealtimeTransport: NSObject, RealtimeTransport, @unchecked Sen
             conversationItemIDs.removeAll()
             conversationItemIDSet.removeAll()
         }
+    }
+
+    private func cancelActiveResponsesForConversationEndLocked() {
+        dispatchPrecondition(condition: .onQueue(stateQueue))
+        guard !activeResponseIDs.isEmpty else { return }
+        for responseID in activeResponseIDs {
+            try? sendJSON([
+                "type": "response.cancel",
+                "response_id": responseID,
+            ])
+        }
+        // WebRTC buffers generated audio separately. Clearing it prevents a
+        // cancelled false-positive reply from chiming in after the humans have
+        // already ended their conversation.
+        try? sendJSON(["type": "output_audio_buffer.clear"])
+        NSLog(
+            "[CodexLensAttention] cancelled %d active response(s) at conversation end",
+            activeResponseIDs.count
+        )
     }
 
     private func trackConversationItem(_ itemID: String) {

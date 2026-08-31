@@ -98,7 +98,7 @@ public enum CoachAttentionPolicy {
 
     Mandatory example: “No, I’m sure Apollo 11 landed on the Moon in 1972.” is coach_interjection with spokenResponse “Apollo 11 landed on the Moon in 1969, not 1972.” It must not be classified silent merely because it is part of a human debate.
 
-    Choose silent for ordinary human-to-human talk, conversation openings or closings, acknowledgements, jokes, insults, subjective opinions, harmless or minor imprecision, personal facts you cannot verify, or questions probably aimed at another person. Ambiguous human relay requests using a pronoun are human-to-human talk, not assistant commands: “Can you tell him Redrum?”, “Tell her I’ll call later”, and “Could you ask them about dinner?” MUST be silent. Only treat messaging as a direct request when assistant delivery intent is explicit, such as “Text John on iMessage that I’ll call later.” “I went to the store yesterday and bought coffee” is silent. “Blue is the best color” is silent. For silent, spokenResponse must be empty.
+    Choose silent for ordinary human-to-human talk, conversation openings or closings, acknowledgements, jokes, insults, subjective opinions, harmless or minor imprecision, personal facts you cannot verify, or questions probably aimed at another person. When the recent turns look like human back-and-forth, default ambiguous second-person or personal questions to silent; do not assume every “you” means the assistant. Ambiguous human relay requests using a pronoun are human-to-human talk, not assistant commands: “Can you tell him Redrum?”, “Tell her I’ll call later”, and “Could you ask them about dinner?” MUST be silent. Only treat messaging as a direct request when assistant delivery intent is explicit, such as “Text John on iMessage that I’ll call later.” “I went to the store yesterday and bought coffee” is silent. “Blue is the best color” is silent. For silent, spokenResponse must be empty.
 
     An incomplete opening such as “Can you...”, “What do you...”, “I need you to...”, or any fragment that plainly expects more wearer speech MUST be silent. Never turn an incomplete fragment into direct_request and never generate a generic readiness phrase.
 
@@ -172,7 +172,10 @@ public struct AddressedSpeechGate: Sendable {
     private var lastAssistantResponseAt: Date?
     private let followUpWindow: TimeInterval
 
-    public init(followUpWindow: TimeInterval = 120) {
+    // Keep ordinary follow-ups natural without claiming the next two minutes of
+    // nearby human conversation. The explicit Codex address remains a hard
+    // attention signal after this window expires.
+    public init(followUpWindow: TimeInterval = 45) {
         self.followUpWindow = followUpWindow
     }
 
@@ -265,6 +268,14 @@ public struct AddressedSpeechGate: Sendable {
             requestWords.removeFirst()
         }
         let requestStem = requestWords.joined(separator: " ")
+
+        // A bare attention word is usually a clipped opening or a Bluetooth
+        // transcription false positive. Wait for the completed request instead
+        // of producing a generic "what's up" readiness response.
+        if explicitlyAddressedToCodex && requestStem.isEmpty {
+            return .ignore("bare attention word")
+        }
+
         let politeRequestOpeners = [
             "can you ", "could you ", "will you ", "would you ",
         ]

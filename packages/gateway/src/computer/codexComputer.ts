@@ -19,6 +19,23 @@ export interface ComputerInspection {
 
 export interface FrontmostComputerApp {
   app: string;
+  windowTitle?: string;
+}
+
+export interface FocusComputerAppRequest {
+  app: string;
+}
+
+export interface FocusedComputerApp {
+  app: string;
+  frontmost: true;
+}
+
+export interface ClosedComputerWindow {
+  app: string;
+  windowTitle?: string;
+  closed: boolean;
+  needsUserDecision: boolean;
 }
 
 export type ComputerInspector = (
@@ -26,6 +43,12 @@ export type ComputerInspector = (
 ) => Promise<Result<ComputerInspection>>;
 
 export type FrontmostComputerAppReader = () => Promise<Result<FrontmostComputerApp>>;
+
+export type ComputerAppFocuser = (
+  request: FocusComputerAppRequest,
+) => Promise<Result<FocusedComputerApp>>;
+
+export type ComputerWindowCloser = () => Promise<Result<ClosedComputerWindow>>;
 
 export type ComputerSurface = 'auto' | 'computer' | 'chrome';
 export type ComputerAuthorization = 'ordinary' | 'confirmed';
@@ -54,6 +77,9 @@ const SANDBOX_EXEC = '/usr/bin/sandbox-exec';
 const INSPECTION_TIMEOUT_MS = 60_000;
 const FRONTMOST_APP_TIMEOUT_MS = 3_000;
 const OSASCRIPT = '/usr/bin/osascript';
+const OPEN = '/usr/bin/open';
+const FOCUS_APP_TIMEOUT_MS = 6_000;
+const CLOSE_WINDOW_TIMEOUT_MS = 4_000;
 const ACTION_TIMEOUT_MS = 90_000;
 const CHATGPT_RESOURCES =
   process.env.CODEX_LENS_CHATGPT_RESOURCES?.trim() ||
@@ -91,7 +117,7 @@ function sandboxString(value: string): string {
 }
 
 function minimalConfig(
-  enableControl: boolean,
+  enableChrome: boolean,
   allowClawdCursor: boolean,
   runtimeHome: string,
   trustedBrowserClientSha256?: string,
@@ -137,7 +163,7 @@ function minimalConfig(
     ...(trustedBrowserClientSha256 === undefined
       ? []
       : [`NODE_REPL_TRUSTED_BROWSER_CLIENT_SHA256S = ${tomlString(trustedBrowserClientSha256)}`]),
-    `BROWSER_USE_AVAILABLE_BACKENDS = ${tomlString(enableControl ? 'chrome' : '')}`,
+    `BROWSER_USE_AVAILABLE_BACKENDS = ${tomlString(enableChrome ? 'chrome' : '')}`,
     'BROWSER_USE_TINYSKY_ENABLED = "0"',
     'BROWSER_USE_CODEX_APP_BUILD_FLAVOR = "prod"',
     'BROWSER_USE_CODEX_APP_VERSION = "26.820.60940"',
@@ -149,7 +175,7 @@ function minimalConfig(
     `CODEX_CLI_PATH = ${tomlString(path.join(CHATGPT_RESOURCES, 'codex'))}`,
     '',
   ];
-  if (enableControl) {
+  if (enableChrome) {
     lines.push(
       '[plugins."chrome@openai-bundled"]',
       'enabled = true',
@@ -169,7 +195,7 @@ function minimalConfig(
 }
 
 async function createIsolatedRuntime(
-  enableControl = false,
+  enableChrome = false,
   allowClawdCursor = false,
 ): Promise<IsolatedCodexRuntime> {
   const systemTemp = await realpath(tmpdir());
@@ -182,7 +208,8 @@ async function createIsolatedRuntime(
     path.join(BUNDLED_MARKETPLACE, 'plugins', 'computer-use', 'skills', 'computer-use'),
     path.join(runtimeSkills, 'computer-use'),
   );
-  if (enableControl) {
+  let trustedBrowserClientSha256: string | undefined;
+  if (enableChrome) {
     const browserClient = path.join(
       BUNDLED_MARKETPLACE,
       'plugins',
@@ -190,31 +217,25 @@ async function createIsolatedRuntime(
       'scripts',
       'browser-client.mjs',
     );
-    const trustedBrowserClientSha256 = createHash('sha256')
+    trustedBrowserClientSha256 = createHash('sha256')
       .update(await readFile(browserClient))
       .digest('hex');
     await symlink(
       path.join(BUNDLED_MARKETPLACE, 'plugins', 'chrome', 'skills', 'control-chrome'),
       path.join(runtimeSkills, 'control-chrome'),
     );
-    if (allowClawdCursor) {
-      await symlink(
-        path.join(SOURCE_CODEX_HOME, 'skills', 'clawdcursor'),
-        path.join(runtimeSkills, 'clawdcursor'),
-      );
-    }
-    await writeFile(
-      path.join(runtimeHome, 'config.toml'),
-      minimalConfig(enableControl, allowClawdCursor, runtimeHome, trustedBrowserClientSha256),
-      { encoding: 'utf8', mode: 0o600 },
-    );
-  } else {
-    await writeFile(
-      path.join(runtimeHome, 'config.toml'),
-      minimalConfig(enableControl, allowClawdCursor, runtimeHome),
-      { encoding: 'utf8', mode: 0o600 },
+  }
+  if (allowClawdCursor) {
+    await symlink(
+      path.join(SOURCE_CODEX_HOME, 'skills', 'clawdcursor'),
+      path.join(runtimeSkills, 'clawdcursor'),
     );
   }
+  await writeFile(
+    path.join(runtimeHome, 'config.toml'),
+    minimalConfig(enableChrome, allowClawdCursor, runtimeHome, trustedBrowserClientSha256),
+    { encoding: 'utf8', mode: 0o600 },
+  );
 
   // Codex's noninteractive approval bypass is required for its signed Computer
   // Use host. Seatbelt is the actual write boundary: the child can write only
@@ -267,9 +288,8 @@ function controlPrompt(request: ComputerActionRequest): string {
     ? `- This is an explicit Chrome request. Use the official Chrome skill only.
 - If Chrome is disconnected or unavailable, do not use Computer Use or Clawd Cursor. Return completed=false, confirmationRequired=false, and say Chrome is unavailable.`
     : request.surface === 'computer'
-      ? `- This is an explicit native-Mac request. Use the official Computer Use skill first.
-- Use Clawd Cursor only if Computer Use gives a definite pre-action unavailable or unsupported result.
-- Never fall back after any click, typing, timeout, lost response, or possibly partial action.`
+      ? `- This is an explicit native-Mac request. Use the official Computer Use skill only.
+- If Computer Use is unavailable or unsupported, return completed=false without attempting another capability.`
       : `- Choose Chrome only when the instruction requires the user's existing Chrome tabs or signed-in Chrome state; otherwise use Computer Use.
 - Use Clawd Cursor only if the chosen official capability gives a definite pre-action unavailable or unsupported result.
 - Never fall back after any click, typing, timeout, lost response, or possibly partial action.`;
@@ -326,7 +346,55 @@ export const readFrontmostComputerApp: FrontmostComputerAppReader = async () =>
   new Promise((resolve) => {
     const child = spawn(OSASCRIPT, [
       '-e',
-      'tell application "System Events" to get name of first application process whose frontmost is true',
+      'tell application "System Events"',
+      '-e',
+      'set activeProcess to first application process whose frontmost is true',
+      '-e',
+      'set appName to name of activeProcess',
+      '-e',
+      'set windowTitle to ""',
+      '-e',
+      'try',
+      '-e',
+      'set selectedWindow to missing value',
+      '-e',
+      'set largestArea to 0',
+      '-e',
+      'repeat with windowRef in windows of activeProcess',
+      '-e',
+      'try',
+      '-e',
+      'if value of attribute "AXMain" of windowRef is true then',
+      '-e',
+      'set selectedWindow to windowRef',
+      '-e',
+      'exit repeat',
+      '-e',
+      'end if',
+      '-e',
+      'set {windowWidth, windowHeight} to size of windowRef',
+      '-e',
+      'set windowArea to windowWidth * windowHeight',
+      '-e',
+      'if windowArea > largestArea then',
+      '-e',
+      'set largestArea to windowArea',
+      '-e',
+      'set selectedWindow to windowRef',
+      '-e',
+      'end if',
+      '-e',
+      'end try',
+      '-e',
+      'end repeat',
+      '-e',
+      'if selectedWindow is not missing value then set windowTitle to name of selectedWindow',
+      '-e',
+      'end try',
+      '-e',
+      'return appName & linefeed & windowTitle',
+      '-e',
+      'end tell',
     ], {
       shell: false,
       stdio: ['ignore', 'pipe', 'ignore'],
@@ -349,9 +417,14 @@ export const readFrontmostComputerApp: FrontmostComputerAppReader = async () =>
       finish(err('FRONTMOST_APP_UNAVAILABLE', 'The active Mac app could not be read.'));
     });
     child.once('close', (code) => {
-      const app = output.trim();
-      if (code === 0 && app.length > 0 && app.length <= 120 && !app.includes('\n')) {
-        finish(ok({ app }));
+      const [rawApp = '', ...titleLines] = output.replaceAll('\r', '').split('\n');
+      const app = rawApp.trim();
+      const windowTitle = titleLines.join(' ').trim().slice(0, 500);
+      if (code === 0 && app.length > 0 && app.length <= 120) {
+        finish(ok({
+          app,
+          ...(windowTitle === '' ? {} : { windowTitle }),
+        }));
         return;
       }
       finish(err('FRONTMOST_APP_UNAVAILABLE', 'The active Mac app could not be read.'));
@@ -362,6 +435,223 @@ export const readFrontmostComputerApp: FrontmostComputerAppReader = async () =>
       finish(err('FRONTMOST_APP_TIMEOUT', 'Reading the active Mac app timed out.'));
     }, FRONTMOST_APP_TIMEOUT_MS);
   });
+
+const APP_NAME_ALIASES = new Map<string, string>([
+  ['browser', 'Google Chrome'],
+  ['chat gpt', 'ChatGPT'],
+  ['chatgpt', 'ChatGPT'],
+  ['chrome', 'Google Chrome'],
+  ['codex', 'ChatGPT'],
+  ['settings', 'System Settings'],
+  ['system settings', 'System Settings'],
+  ['visual studio code', 'Visual Studio Code'],
+  ['vs code', 'Visual Studio Code'],
+  ['vscode', 'Visual Studio Code'],
+]);
+
+const APP_PROCESS_NAMES = new Map<string, ReadonlySet<string>>([
+  ['Visual Studio Code', new Set(['Visual Studio Code', 'Code'])],
+]);
+
+function canonicalAppName(requested: string): string | undefined {
+  const trimmed = requested.trim();
+  if (
+    trimmed.length === 0 ||
+    trimmed.length > 120 ||
+    trimmed.startsWith('-') ||
+    /[/\0\n\r]/u.test(trimmed)
+  ) {
+    return undefined;
+  }
+  return APP_NAME_ALIASES.get(trimmed.toLocaleLowerCase('en-US')) ?? trimmed;
+}
+
+function wait(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+function isExpectedFrontmostApp(requestedApp: string, actualProcess: string): boolean {
+  const expectedNames = APP_PROCESS_NAMES.get(requestedApp) ?? new Set([requestedApp]);
+  return [...expectedNames].some((name) => actualProcess.localeCompare(name, undefined, {
+    sensitivity: 'base',
+  }) === 0);
+}
+
+/**
+ * Opens or activates one named application without starting a model. The app
+ * name is passed as one argv value to macOS `open`, never interpreted by a
+ * shell, and completion is verified from the actual frontmost process.
+ */
+export const focusComputerApp: ComputerAppFocuser = async (request) => {
+  const app = canonicalAppName(request.app);
+  if (app === undefined) {
+    return err('FOCUS_APP_INVALID', 'That Mac app name is not valid.');
+  }
+
+  const opened = await new Promise<boolean>((resolve) => {
+    const child = spawn(OPEN, ['-a', app], {
+      shell: false,
+      stdio: 'ignore',
+    });
+    let settled = false;
+    const finish = (value: boolean): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      resolve(value);
+    };
+    child.once('error', () => finish(false));
+    child.once('close', (code) => finish(code === 0));
+    const timeout = setTimeout(() => {
+      child.kill();
+      finish(false);
+    }, FOCUS_APP_TIMEOUT_MS);
+  });
+  if (!opened) {
+    return err('FOCUS_APP_UNAVAILABLE', `${app} could not be opened on the Mac.`);
+  }
+
+  const deadline = Date.now() + FOCUS_APP_TIMEOUT_MS;
+  do {
+    const frontmost = await readFrontmostComputerApp();
+    if (frontmost.ok && isExpectedFrontmostApp(app, frontmost.value.app)) {
+      return ok({ app, frontmost: true as const });
+    }
+    await wait(100);
+  } while (Date.now() < deadline);
+
+  return err('FOCUS_APP_NOT_VERIFIED', `${app} opened, but did not become the frontmost Mac app.`);
+};
+
+/**
+ * Requests the standard accessibility close action on only the current main
+ * window. macOS and the target app retain ownership of unsaved-change dialogs;
+ * this helper never chooses Save, Don't Save, or Force Quit.
+ */
+export const closeFrontmostComputerWindow: ComputerWindowCloser = async () => {
+  const before = await readFrontmostComputerApp();
+  if (!before.ok) {
+    return err('CLOSE_WINDOW_UNAVAILABLE', 'The frontmost Mac app has no closable window.');
+  }
+
+  const requestResult = await new Promise<{
+    requested: boolean;
+    beforeCount: number;
+    afterCount: number;
+  }>((resolve) => {
+    const child = spawn(OSASCRIPT, [
+      '-e',
+      'tell application "System Events"',
+      '-e',
+      'set activeProcess to first application process whose frontmost is true',
+      '-e',
+      'set beforeCount to count of windows of activeProcess',
+      '-e',
+      'set selectedWindow to missing value',
+      '-e',
+      'set largestArea to 0',
+      '-e',
+      'repeat with windowRef in windows of activeProcess',
+      '-e',
+      'try',
+      '-e',
+      'if value of attribute "AXMain" of windowRef is true then',
+      '-e',
+      'set selectedWindow to windowRef',
+      '-e',
+      'exit repeat',
+      '-e',
+      'end if',
+      '-e',
+      'set {windowWidth, windowHeight} to size of windowRef',
+      '-e',
+      'set windowArea to windowWidth * windowHeight',
+      '-e',
+      'if windowArea > largestArea then',
+      '-e',
+      'set largestArea to windowArea',
+      '-e',
+      'set selectedWindow to windowRef',
+      '-e',
+      'end if',
+      '-e',
+      'end try',
+      '-e',
+      'end repeat',
+      '-e',
+      'if selectedWindow is missing value then error "No closable window"',
+      '-e',
+      'set closeButton to first button of selectedWindow whose subrole is "AXCloseButton"',
+      '-e',
+      'perform action "AXPress" of closeButton',
+      '-e',
+      'delay 0.4',
+      '-e',
+      'set afterCount to 0',
+      '-e',
+      'try',
+      '-e',
+      'set afterCount to count of windows of activeProcess',
+      '-e',
+      'end try',
+      '-e',
+      'return (beforeCount as text) & linefeed & (afterCount as text)',
+      '-e',
+      'end tell',
+    ], {
+      shell: false,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    let output = '';
+    let settled = false;
+    const finish = (value: { requested: boolean; beforeCount: number; afterCount: number }): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      resolve(value);
+    };
+    child.stdout.setEncoding('utf8');
+    child.stdout.on('data', (chunk: string) => {
+      if (output.length < 128) output += chunk.slice(0, 128 - output.length);
+    });
+    child.once('error', () => finish({ requested: false, beforeCount: 0, afterCount: 0 }));
+    child.once('close', (code) => {
+      const counts = output.trim().split(/\s+/u).map(Number);
+      finish({
+        requested: code === 0 && counts.length >= 2 && counts.every(Number.isFinite),
+        beforeCount: counts[0] ?? 0,
+        afterCount: counts[1] ?? 0,
+      });
+    });
+    const timeout = setTimeout(() => {
+      child.kill();
+      finish({ requested: false, beforeCount: 0, afterCount: 0 });
+    }, CLOSE_WINDOW_TIMEOUT_MS);
+  });
+  if (!requestResult.requested) {
+    return err('CLOSE_WINDOW_UNAVAILABLE', 'The frontmost Mac window could not be closed.');
+  }
+
+  if (requestResult.afterCount < requestResult.beforeCount) {
+    return ok({
+      app: before.value.app,
+      windowTitle: before.value.windowTitle,
+      closed: true,
+      needsUserDecision: false,
+    });
+  }
+
+  const after = await readFrontmostComputerApp();
+  const closed = !after.ok ||
+    after.value.app !== before.value.app ||
+    after.value.windowTitle !== before.value.windowTitle;
+  return ok({
+    app: before.value.app,
+    windowTitle: before.value.windowTitle,
+    closed,
+    needsUserDecision: !closed,
+  });
+};
 
 /**
  * Runs a tightly-scoped Codex turn as the supported broker for OpenAI's signed
@@ -542,7 +832,10 @@ function parseComputerActionResult(
 export const controlComputer: ComputerController = async (request) => {
   let runtime: IsolatedCodexRuntime;
   try {
-    runtime = await createIsolatedRuntime(true, request.surface !== 'chrome');
+    runtime = await createIsolatedRuntime(
+      request.surface !== 'computer',
+      request.surface === 'auto',
+    );
   } catch {
     return err(
       'COMPUTER_CONTROL_UNAVAILABLE',
@@ -564,6 +857,7 @@ export const controlComputer: ComputerController = async (request) => {
     const lines = createInterface({ input: child.stdout, crlfDelay: Infinity });
     let finalMessage = '';
     let unsafeToolObserved = false;
+    let policyViolationCode = 'COMPUTER_CONTROL_POLICY_VIOLATION';
     let toolCalls = 0;
     let settled = false;
 
@@ -593,6 +887,7 @@ export const controlComputer: ComputerController = async (request) => {
         }
         if (item.type === 'command_execution' || item.type === 'file_change') {
           unsafeToolObserved = true;
+          policyViolationCode = 'COMPUTER_CONTROL_UNEXPECTED_WRITE_TOOL';
           child.kill();
           return;
         }
@@ -602,6 +897,10 @@ export const controlComputer: ComputerController = async (request) => {
           (item.server !== 'clawdcursor' || request.surface === 'chrome')
         ) {
           unsafeToolObserved = true;
+          policyViolationCode = 'COMPUTER_CONTROL_UNEXPECTED_MCP_TOOL';
+          if (process.env.CODEX_LENS_DEBUG_COMPUTER === '1') {
+            console.error(JSON.stringify({ server: item.server, tool: item.tool }));
+          }
           child.kill();
           return;
         }
@@ -627,7 +926,7 @@ export const controlComputer: ComputerController = async (request) => {
       }
       finish(err(
         unsafeToolObserved
-          ? 'COMPUTER_CONTROL_POLICY_VIOLATION'
+          ? policyViolationCode
           : 'COMPUTER_CONTROL_FAILED',
         'Mac computer control did not complete.',
       ));

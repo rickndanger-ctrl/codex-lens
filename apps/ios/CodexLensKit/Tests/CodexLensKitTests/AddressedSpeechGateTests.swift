@@ -8,7 +8,7 @@ final class AddressedSpeechGateTests: XCTestCase {
         XCTAssertFalse(gate.decide(transcript: "Lens", conversationCoachEnabled: false).shouldRespond)
         XCTAssertEqual(
             gate.decide(transcript: "Codex", conversationCoachEnabled: true),
-            .respond("explicit Codex address")
+            .ignore("bare attention word")
         )
         XCTAssertEqual(
             gate.decide(
@@ -42,6 +42,19 @@ final class AddressedSpeechGateTests: XCTestCase {
             XCTAssertEqual(
                 gate.decide(transcript: variant, conversationCoachEnabled: true),
                 .respond("explicit Codex address"),
+                variant
+            )
+        }
+    }
+
+    func testBareCodexTranscriptionVariantsWaitForTheRequest() {
+        var gate = AddressedSpeechGate()
+        let variants = ["Codex", "Codec", "Code X", "Hey Codex"]
+
+        for variant in variants {
+            XCTAssertEqual(
+                gate.decide(transcript: variant, conversationCoachEnabled: true),
+                .ignore("bare attention word"),
                 variant
             )
         }
@@ -142,7 +155,7 @@ final class AddressedSpeechGateTests: XCTestCase {
         XCTAssertFalse(gate.decide(transcript: "That happened a long time ago", conversationCoachEnabled: false, now: start.addingTimeInterval(60)).shouldRespond)
     }
 
-    func testDefaultFollowUpWindowKeepsARealConversationAliveForTwoMinutes() {
+    func testDefaultFollowUpWindowKeepsImmediateFollowUpsButReleasesAmbientConversation() {
         var gate = AddressedSpeechGate()
         let start = Date(timeIntervalSince1970: 1_000)
         gate.noteAssistantResponse(at: start)
@@ -151,7 +164,7 @@ final class AddressedSpeechGateTests: XCTestCase {
             gate.decide(
                 transcript: "What window is open on my Mac?",
                 conversationCoachEnabled: true,
-                now: start.addingTimeInterval(90)
+                now: start.addingTimeInterval(30)
             ),
             .respond("explicit information request")
         )
@@ -159,9 +172,25 @@ final class AddressedSpeechGateTests: XCTestCase {
             gate.decide(
                 transcript: "Can you explain that another way?",
                 conversationCoachEnabled: true,
-                now: start.addingTimeInterval(90)
+                now: start.addingTimeInterval(30)
             ),
             .respond("active assistant request")
+        )
+        XCTAssertEqual(
+            gate.decide(
+                transcript: "Can you explain that another way?",
+                conversationCoachEnabled: true,
+                now: start.addingTimeInterval(60)
+            ),
+            .evaluate("possible direct assistant request")
+        )
+        XCTAssertEqual(
+            gate.decide(
+                transcript: "Codex, can you explain that another way?",
+                conversationCoachEnabled: true,
+                now: start.addingTimeInterval(60)
+            ),
+            .respond("explicit Codex address")
         )
     }
 
@@ -400,6 +429,7 @@ final class AddressedSpeechGateTests: XCTestCase {
         XCTAssertTrue(policy.contains("It must not be classified silent"))
         XCTAssertTrue(policy.contains("Can you tell him Redrum?"))
         XCTAssertTrue(policy.contains("MUST be silent"))
+        XCTAssertTrue(policy.contains("do not assume every “you” means the assistant"))
         XCTAssertTrue(policy.contains("incomplete fragment into direct_request"))
         XCTAssertTrue(policy.contains("generic readiness phrase"))
     }

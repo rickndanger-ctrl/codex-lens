@@ -45,7 +45,35 @@ public enum CodexLensTools {
     /// full Computer Use model turn.
     public static let getFrontmostMacApp = RealtimeToolDefinition(
         name: "get_frontmost_mac_app",
-        description: "Return the exact frontmost application on the wearer's home Mac using a fast, read-only macOS query. Use this for questions such as ‘what app is open?’, ‘what app is active?’, or ‘what is on my computer right now?’ when the user only wants the app name. Do not use the slower general Computer Use tool for those questions. This cannot inspect app contents, click, type, or change anything.",
+        description: "Return the exact frontmost application and its current window or document title on the wearer's home Mac using a fast, read-only macOS query. Use this for questions such as ‘what app is open?’, ‘what window, file, or project is active?’, or ‘what is on my computer right now?’ when the app and window title can answer. Do not use the slower general Computer Use tool for those questions. This cannot inspect content inside the window, click, type, or change anything.",
+        parameters: .object([
+            "type": .string("object"),
+            "properties": .object([:]),
+            "additionalProperties": .bool(false),
+        ])
+    )
+
+    /// Open or switch to one named Mac app without paying the startup cost of
+    /// a general Computer Use model turn.
+    public static let focusMacApp = RealtimeToolDefinition(
+        name: "focus_mac_app",
+        description: "Quickly open or bring one named application to the front on the wearer's home Mac, then verify it is frontmost. Use this instead of use_mac_computer whenever the request is only to open, show, switch to, or bring forward an app such as Xcode, Visual Studio Code, ChatGPT, Chrome, Safari, Finder, Terminal, Messages, Notes, Calendar, Mail, or System Settings. This is a direct reversible action and does not need a confirmation. Never call it proactively or from ambient conversation.",
+        parameters: .object([
+            "type": .string("object"),
+            "properties": .object([
+                "app": .object([
+                    "type": .string("string"),
+                    "description": .string("The application name requested by the wearer"),
+                ]),
+            ]),
+            "required": .array([.string("app")]),
+            "additionalProperties": .bool(false),
+        ])
+    )
+
+    public static let closeFrontmostMacWindow = RealtimeToolDefinition(
+        name: "close_frontmost_mac_window",
+        description: "Close only the frontmost main Mac window when the wearer directly asks to close the current window or close out the app they just switched to. This never force-quits an app and never chooses Save, Don't Save, or another confirmation. If unsaved work produces a dialog, report that the wearer must decide. Use focus_mac_app first when the wearer names a different app, then call this tool.",
         parameters: .object([
             "type": .string("object"),
             "properties": .object([:]),
@@ -230,6 +258,8 @@ public enum CodexLensTools {
     public static let all: [RealtimeToolDefinition] = [
         researchWeb,
         getFrontmostMacApp,
+        focusMacApp,
+        closeFrontmostMacWindow,
         inspectMacApp,
         inspectCodexProject,
         useMacComputer,

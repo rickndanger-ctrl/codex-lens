@@ -105,6 +105,24 @@ public struct GatewayClient: Sendable {
         return try await perform(request, as: FrontmostComputerApp.self)
     }
 
+    /// Opens or activates one named Mac app through the deterministic gateway
+    /// fast path, then returns only after macOS confirms it is frontmost.
+    public func focusComputerApp(app: String) async throws -> FocusedComputerApp {
+        let request = try makeRequest(
+            method: "POST",
+            path: "/v1/computer/focus",
+            jsonBody: ["app": app]
+        )
+        return try await perform(request, as: FocusedComputerApp.self)
+    }
+
+    /// Closes only the current main Mac window. The target app keeps ownership
+    /// of any unsaved-changes prompt; the gateway never chooses a response.
+    public func closeFrontmostComputerWindow() async throws -> ClosedComputerWindow {
+        let request = try makeRequest(method: "POST", path: "/v1/computer/close-window")
+        return try await perform(request, as: ClosedComputerWindow.self)
+    }
+
     /// Asks the Mac gateway for one read-only accessibility inspection.
     public func inspectComputer(app: String, question: String) async throws -> ComputerInspection {
         let request = try makeRequest(

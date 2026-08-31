@@ -233,6 +233,10 @@ final class SessionViewModel: ObservableObject {
 
         prepareAudioRouteMonitoring()
         refreshAudioRoute()
+        if !hasGlassesAudioInputAvailable {
+            _ = await activelyAcquireGlassesAudioRoute(reason: "Assistant startup")
+            refreshAudioRoute()
+        }
         guard hasGlassesAudioInputAvailable else {
             isRealtimePausedForMissingGlassesAudio = true
             isVoiceActive = false
@@ -727,6 +731,44 @@ final class SessionViewModel: ObservableObject {
         }
     }
 
+    /// A passive AVAudioSession does not always publish an already-connected
+    /// Bluetooth HFP input after an app update or process restart. Briefly
+    /// activating voiceChat forces iOS to negotiate the route. We keep the
+    /// session active only when the negotiated input is the Ray-Ban headset;
+    /// the built-in iPhone microphone is never accepted as a voice source.
+    private func activelyAcquireGlassesAudioRoute(reason: String) async -> Bool {
+        guard coordinator == nil, !isRealtimeConnecting else { return false }
+        let session = AVAudioSession.sharedInstance()
+        do {
+            try session.setCategory(
+                .playAndRecord,
+                mode: .voiceChat,
+                options: [.allowBluetoothHFP]
+            )
+            try session.setActive(true)
+            if let glassesInput = session.availableInputs?.first(where: Self.isGlassesHFPInput) {
+                try session.setPreferredInput(glassesInput)
+            }
+            try? await Task.sleep(for: .milliseconds(500))
+            refreshAudioRoute()
+            if hasGlassesAudioInputAvailable {
+                NSLog("[CodexLensAudio] actively acquired glasses HFP route: %@", reason)
+                return true
+            }
+            try? session.setActive(false, options: [.notifyOthersOnDeactivation])
+            NSLog("[CodexLensAudio] active route probe found no glasses input: %@", reason)
+            return false
+        } catch {
+            try? session.setActive(false, options: [.notifyOthersOnDeactivation])
+            NSLog(
+                "[CodexLensAudio] active glasses route acquisition failed (%@): %@",
+                reason,
+                error.localizedDescription
+            )
+            return false
+        }
+    }
+
     private func observeSystemAudioRoute() {
         let center = NotificationCenter.default
         audioRouteObserverTokens.append(center.addObserver(
@@ -1118,6 +1160,12 @@ final class SessionViewModel: ObservableObject {
                 }
                 self.prepareAudioRouteMonitoring()
                 self.refreshAudioRoute()
+                if !self.hasGlassesAudioInputAvailable {
+                    _ = await self.activelyAcquireGlassesAudioRoute(
+                        reason: "Automatic recovery attempt \(attempt + 1)"
+                    )
+                    self.refreshAudioRoute()
+                }
                 if self.hasGlassesAudioInputAvailable {
                     self.isAudioRouteStabilizing = true
                     self.voiceStatus = "Glasses audio found · stabilizing…"
@@ -1258,11 +1306,67 @@ final class SessionViewModel: ObservableObject {
             }
             do {
                 let result = try await gateway.frontmostComputerApp()
-                output = .object([
+                var fields: [String: JSONValue] = [
                     "app": .string(result.app),
                     "readOnly": .bool(result.readOnly),
-                    "instruction": .string("Answer with the exact active Mac app name. Do not claim to have inspected its contents."),
+                    "instruction": .string("Answer with the exact active Mac app and window or document title when available. Do not claim to have inspected content inside the window."),
+                ]
+                if let windowTitle = result.windowTitle {
+                    fields["windowTitle"] = .string(windowTitle)
+                }
+                output = .object(fields)
+            } catch {
+                output = .object(["error": .string(error.localizedDescription)])
+            }
+        case "focus_mac_app":
+            guard let gateway else {
+                output = .object(["error": .string("The Mac gateway is not connected.")])
+                break
+            }
+            guard
+                let app = arguments.string("app")?.trimmingCharacters(in: .whitespacesAndNewlines),
+                !app.isEmpty
+            else {
+                output = .object(["error": .string("A Mac app name is required.")])
+                break
+            }
+            pendingComputerConfirmation = nil
+            pendingTextConfirmation = nil
+            lastUserTranscript = nil
+            lastUserTranscriptAt = nil
+            do {
+                let result = try await gateway.focusComputerApp(app: app)
+                output = .object([
+                    "app": .string(result.app),
+                    "frontmost": .bool(result.frontmost),
+                    "instruction": .string("Confirm briefly that the requested app is now open and frontmost."),
                 ])
+            } catch {
+                output = .object(["error": .string(error.localizedDescription)])
+            }
+        case "close_frontmost_mac_window":
+            guard let gateway else {
+                output = .object(["error": .string("The Mac gateway is not connected.")])
+                break
+            }
+            pendingComputerConfirmation = nil
+            pendingTextConfirmation = nil
+            lastUserTranscript = nil
+            lastUserTranscriptAt = nil
+            do {
+                let result = try await gateway.closeFrontmostComputerWindow()
+                var fields: [String: JSONValue] = [
+                    "app": .string(result.app),
+                    "closed": .bool(result.closed),
+                    "needsUserDecision": .bool(result.needsUserDecision),
+                    "instruction": .string(result.closed
+                        ? "Confirm briefly that the requested window closed."
+                        : "Tell the wearer the window did not close because the app needs a save or confirmation decision. Never choose for them."),
+                ]
+                if let windowTitle = result.windowTitle {
+                    fields["windowTitle"] = .string(windowTitle)
+                }
+                output = .object(fields)
             } catch {
                 output = .object(["error": .string(error.localizedDescription)])
             }

@@ -164,12 +164,33 @@ public struct ComputerInspection: Codable, Equatable, Sendable {
 /// The active Mac application name from a direct read-only macOS query.
 public struct FrontmostComputerApp: Codable, Equatable, Sendable {
     public let app: String
+    public let windowTitle: String?
     public let readOnly: Bool
 
-    public init(app: String, readOnly: Bool = true) {
+    public init(app: String, windowTitle: String? = nil, readOnly: Bool = true) {
         self.app = app
+        self.windowTitle = windowTitle
         self.readOnly = readOnly
     }
+}
+
+/// A named Mac application that the gateway opened or activated and then
+/// verified as the actual frontmost process.
+public struct FocusedComputerApp: Codable, Equatable, Sendable {
+    public let app: String
+    public let frontmost: Bool
+
+    public init(app: String, frontmost: Bool = true) {
+        self.app = app
+        self.frontmost = frontmost
+    }
+}
+
+public struct ClosedComputerWindow: Codable, Equatable, Sendable {
+    public let app: String
+    public let windowTitle: String?
+    public let closed: Bool
+    public let needsUserDecision: Bool
 }
 
 public struct WebResearchSource: Codable, Equatable, Sendable {

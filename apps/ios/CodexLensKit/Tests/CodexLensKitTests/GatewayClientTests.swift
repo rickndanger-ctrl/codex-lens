@@ -285,13 +285,39 @@ final class GatewayClientTests: XCTestCase {
 
     func testFrontmostComputerAppUsesReadOnlyFastEndpoint() async throws {
         let transport = StubTransport { _ in
-            .init(status: 200, body: Data(#"{ "app": "ChatGPT", "readOnly": true }"#.utf8))
+            .init(status: 200, body: Data(#"{ "app": "Visual Studio Code", "windowTitle": "Welcome — KitchenCapture", "readOnly": true }"#.utf8))
         }
         let result = try await makeClient(transport).frontmostComputerApp()
-        XCTAssertEqual(result.app, "ChatGPT")
+        XCTAssertEqual(result.app, "Visual Studio Code")
+        XCTAssertEqual(result.windowTitle, "Welcome — KitchenCapture")
         XCTAssertTrue(result.readOnly)
         XCTAssertEqual(transport.lastRequest?.httpMethod, "GET")
         XCTAssertEqual(transport.lastRequest?.url?.path, "/v1/computer/frontmost")
+        XCTAssertNil(transport.lastRequest?.httpBody)
+    }
+
+    func testFocusComputerAppUsesDeterministicFastEndpoint() async throws {
+        let transport = StubTransport { _ in
+            .init(status: 200, body: Data(#"{ "app": "Visual Studio Code", "frontmost": true }"#.utf8))
+        }
+        let result = try await makeClient(transport).focusComputerApp(app: "VS Code")
+        XCTAssertEqual(result.app, "Visual Studio Code")
+        XCTAssertTrue(result.frontmost)
+        XCTAssertEqual(transport.lastRequest?.httpMethod, "POST")
+        XCTAssertEqual(transport.lastRequest?.url?.path, "/v1/computer/focus")
+        let body = String(data: transport.lastRequest?.httpBody ?? Data(), encoding: .utf8) ?? ""
+        XCTAssertTrue(body.contains("VS Code"))
+    }
+
+    func testCloseFrontmostComputerWindowNeverIncludesAConfirmationChoice() async throws {
+        let transport = StubTransport { _ in
+            .init(status: 200, body: Data(#"{ "app": "Xcode", "windowTitle": "CodexLensApp", "closed": true, "needsUserDecision": false }"#.utf8))
+        }
+        let result = try await makeClient(transport).closeFrontmostComputerWindow()
+        XCTAssertTrue(result.closed)
+        XCTAssertFalse(result.needsUserDecision)
+        XCTAssertEqual(transport.lastRequest?.httpMethod, "POST")
+        XCTAssertEqual(transport.lastRequest?.url?.path, "/v1/computer/close-window")
         XCTAssertNil(transport.lastRequest?.httpBody)
     }
 

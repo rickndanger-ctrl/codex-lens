@@ -68,7 +68,10 @@ describe('POST /v1/computer/inspect', () => {
 describe('GET /v1/computer/frontmost', () => {
   it('returns only the active app name through the read-only fast path', async () => {
     const server = buildServer({
-      frontmostComputerAppReader: async () => ok({ app: 'ChatGPT' }),
+      frontmostComputerAppReader: async () => ok({
+        app: 'Visual Studio Code',
+        windowTitle: 'Welcome — KitchenCapture',
+      }),
     });
     const response = await server.inject({
       method: 'GET',
@@ -77,7 +80,11 @@ describe('GET /v1/computer/frontmost', () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(response.json()).toEqual({ app: 'ChatGPT', readOnly: true });
+    expect(response.json()).toEqual({
+      app: 'Visual Studio Code',
+      windowTitle: 'Welcome — KitchenCapture',
+      readOnly: true,
+    });
     await server.close();
   });
 
@@ -97,6 +104,107 @@ describe('GET /v1/computer/frontmost', () => {
     expect(response.statusCode).toBe(503);
     expect(response.json()).toMatchObject({
       message: 'The active Mac app could not be read.',
+    });
+    await server.close();
+  });
+});
+
+describe('POST /v1/computer/focus', () => {
+  it('opens one named app through the deterministic fast path', async () => {
+    const focus = vi.fn(async ({ app }: { app: string }) => ok({
+      app: app === 'VS Code' ? 'Visual Studio Code' : app,
+      frontmost: true as const,
+    }));
+    const server = buildServer({ computerAppFocuser: focus });
+    const response = await server.inject({
+      method: 'POST',
+      url: '/v1/computer/focus',
+      headers: { authorization: `Bearer ${TOKEN}` },
+      payload: { app: 'VS Code' },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      app: 'Visual Studio Code',
+      frontmost: true,
+    });
+    expect(focus).toHaveBeenCalledWith({ app: 'VS Code' });
+    await server.close();
+  });
+
+  it('rejects malformed requests and fails closed when focus is unverified', async () => {
+    const server = buildServer({
+      computerAppFocuser: async () => err(
+        'FOCUS_APP_NOT_VERIFIED',
+        'The requested app did not become frontmost.',
+      ),
+    });
+    const invalid = await server.inject({
+      method: 'POST',
+      url: '/v1/computer/focus',
+      headers: { authorization: `Bearer ${TOKEN}` },
+      payload: { app: 'Xcode', instruction: 'type this' },
+    });
+    expect(invalid.statusCode).toBe(400);
+
+    const unavailable = await server.inject({
+      method: 'POST',
+      url: '/v1/computer/focus',
+      headers: { authorization: `Bearer ${TOKEN}` },
+      payload: { app: 'Xcode' },
+    });
+    expect(unavailable.statusCode).toBe(503);
+    expect(unavailable.json()).toMatchObject({
+      message: 'The requested app did not become frontmost.',
+    });
+    await server.close();
+  });
+});
+
+describe('POST /v1/computer/close-window', () => {
+  it('closes only the current window through the deterministic path', async () => {
+    const closeWindow = vi.fn(async () => ok({
+      app: 'Xcode',
+      windowTitle: 'CodexLensApp — SessionViewModel.swift',
+      closed: true,
+      needsUserDecision: false,
+    }));
+    const server = buildServer({ computerWindowCloser: closeWindow });
+    const response = await server.inject({
+      method: 'POST',
+      url: '/v1/computer/close-window',
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      app: 'Xcode',
+      windowTitle: 'CodexLensApp — SessionViewModel.swift',
+      closed: true,
+      needsUserDecision: false,
+    });
+    expect(closeWindow).toHaveBeenCalledOnce();
+    await server.close();
+  });
+
+  it('reports a save decision without choosing for the user', async () => {
+    const server = buildServer({
+      computerWindowCloser: async () => ok({
+        app: 'Visual Studio Code',
+        windowTitle: 'Unsaved file',
+        closed: false,
+        needsUserDecision: true,
+      }),
+    });
+    const response = await server.inject({
+      method: 'POST',
+      url: '/v1/computer/close-window',
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      closed: false,
+      needsUserDecision: true,
     });
     await server.close();
   });

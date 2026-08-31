@@ -2,9 +2,13 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 
 import {
+  closeFrontmostComputerWindow,
   controlComputer,
+  focusComputerApp,
   inspectComputer,
   readFrontmostComputerApp,
+  type ComputerAppFocuser,
+  type ComputerWindowCloser,
   type ComputerController,
   type ComputerInspector,
   type FrontmostComputerAppReader,
@@ -17,6 +21,8 @@ import { BoundaryBadRequestSchema, validateBoundary } from '../http/validation.j
 
 export const COMPUTER_INSPECT_PATH = '/v1/computer/inspect';
 export const COMPUTER_FRONTMOST_PATH = '/v1/computer/frontmost';
+export const COMPUTER_FOCUS_PATH = '/v1/computer/focus';
+export const COMPUTER_CLOSE_WINDOW_PATH = '/v1/computer/close-window';
 export const COMPUTER_USE_PATH = '/v1/computer/use';
 export const COMPUTER_PREPARE_PATH = '/v1/computer/prepare';
 export const COMPUTER_EXECUTE_PATH = '/v1/computer/execute';
@@ -33,7 +39,24 @@ export const ComputerInspectResponseSchema = z.object({
 
 export const FrontmostComputerAppResponseSchema = z.object({
   app: z.string().min(1).max(120),
+  windowTitle: z.string().min(1).max(500).optional(),
   readOnly: z.literal(true),
+}).strict();
+
+export const FocusComputerAppRequestSchema = z.object({
+  app: z.string().trim().min(1).max(120),
+}).strict();
+
+export const FocusedComputerAppResponseSchema = z.object({
+  app: z.string().min(1).max(120),
+  frontmost: z.literal(true),
+}).strict();
+
+export const ClosedComputerWindowResponseSchema = z.object({
+  app: z.string().min(1).max(120),
+  windowTitle: z.string().min(1).max(500).optional(),
+  closed: z.boolean(),
+  needsUserDecision: z.boolean(),
 }).strict();
 
 export const PrepareComputerActionRequestSchema = z.object({
@@ -84,6 +107,8 @@ export function registerComputerRoutes(
   controller: ComputerController = controlComputer,
   actionService?: ComputerActionService,
   frontmostReader: FrontmostComputerAppReader = readFrontmostComputerApp,
+  appFocuser: ComputerAppFocuser = focusComputerApp,
+  windowCloser: ComputerWindowCloser = closeFrontmostComputerWindow,
 ): void {
   const actions = actionService ?? createComputerActionService({ control: controller });
   server.get(COMPUTER_FRONTMOST_PATH, {
@@ -103,7 +128,61 @@ export function registerComputerRoutes(
         message: result.error.message,
       });
     }
-    return { app: result.value.app, readOnly: true as const };
+    return { ...result.value, readOnly: true as const };
+  });
+
+  server.post(COMPUTER_FOCUS_PATH, {
+    schema: {
+      body: jsonSchema(FocusComputerAppRequestSchema),
+      response: {
+        200: jsonSchema(FocusedComputerAppResponseSchema),
+        400: jsonSchema(BoundaryBadRequestSchema),
+        503: jsonSchema(ComputerUnavailableSchema),
+      },
+    },
+  }, async (request, reply) => {
+    const body = validateBoundary(
+      FocusComputerAppRequestSchema,
+      request.body,
+      'INVALID_COMPUTER_FOCUS_REQUEST',
+    );
+    if (!body.ok) {
+      return reply.code(400).send({
+        statusCode: 400,
+        error: 'Bad Request',
+        message: body.error.message,
+      });
+    }
+    const result = await appFocuser(body.value);
+    if (!result.ok) {
+      request.log.warn({ code: result.error.code }, 'app focus failed');
+      return reply.code(503).send({
+        statusCode: 503,
+        error: 'Service Unavailable',
+        message: result.error.message,
+      });
+    }
+    return result.value;
+  });
+
+  server.post(COMPUTER_CLOSE_WINDOW_PATH, {
+    schema: {
+      response: {
+        200: jsonSchema(ClosedComputerWindowResponseSchema),
+        503: jsonSchema(ComputerUnavailableSchema),
+      },
+    },
+  }, async (request, reply) => {
+    const result = await windowCloser();
+    if (!result.ok) {
+      request.log.warn({ code: result.error.code }, 'frontmost window close failed');
+      return reply.code(503).send({
+        statusCode: 503,
+        error: 'Service Unavailable',
+        message: result.error.message,
+      });
+    }
+    return result.value;
   });
 
   server.post(COMPUTER_INSPECT_PATH, {
