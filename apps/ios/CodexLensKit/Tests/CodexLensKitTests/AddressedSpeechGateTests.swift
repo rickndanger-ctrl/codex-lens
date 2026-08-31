@@ -65,9 +65,42 @@ final class AddressedSpeechGateTests: XCTestCase {
         XCTAssertTrue(gate.decide(transcript: "Read this screen", conversationCoachEnabled: false).shouldRespond)
         XCTAssertTrue(gate.decide(transcript: "What am I looking at?", conversationCoachEnabled: false).shouldRespond)
         XCTAssertTrue(gate.decide(transcript: "Can you fact check that?", conversationCoachEnabled: false).shouldRespond)
-        XCTAssertTrue(gate.decide(transcript: "Take a pic", conversationCoachEnabled: true).shouldRespond)
-        XCTAssertTrue(gate.decide(transcript: "Snap that photo", conversationCoachEnabled: true).shouldRespond)
         XCTAssertTrue(gate.decide(transcript: "Could you look over here", conversationCoachEnabled: true).shouldRespond)
+    }
+
+    func testShortVisualCommandsNeedCodexDuringAmbientConversation() {
+        var gate = AddressedSpeechGate(followUpWindow: 45)
+        let start = Date(timeIntervalSince1970: 1_000)
+
+        for transcript in ["Take a pic", "Snap that photo", "Look at this"] {
+            XCTAssertEqual(
+                gate.decide(
+                    transcript: transcript,
+                    conversationCoachEnabled: true,
+                    now: start
+                ),
+                .ignore("short unaddressed visual command"),
+                transcript
+            )
+        }
+        XCTAssertEqual(
+            gate.decide(
+                transcript: "Codex, take a pic",
+                conversationCoachEnabled: true,
+                now: start
+            ),
+            .respond("explicit visual action")
+        )
+
+        gate.noteAssistantResponse(at: start)
+        XCTAssertEqual(
+            gate.decide(
+                transcript: "Look at this",
+                conversationCoachEnabled: true,
+                now: start.addingTimeInterval(10)
+            ),
+            .respond("explicit visual action")
+        )
     }
 
     func testIncompleteRequestFragmentsNeverInterruptTheWearer() {
@@ -107,16 +140,16 @@ final class AddressedSpeechGateTests: XCTestCase {
     func testExplicitVisualRequestsRequireDeterministicCapture() {
         var gate = AddressedSpeechGate()
         let visualRequests = [
-            "Take a pic",
-            "Snap that photo",
+            "Codex, take a pic",
+            "Codex, snap that photo",
             "Could you look over here",
-            "Read this screen",
-            "What do you see?",
+            "Codex, read this screen",
+            "Codex, what do you see?",
             "Now I want you to take a picture",
             "Go ahead and take another photo",
             "I need you to read this screen",
-            "Take a pick",
-            "Now take the pick again",
+            "Codex, take a pick",
+            "Codex, now take the pick again",
         ]
 
         for transcript in visualRequests {

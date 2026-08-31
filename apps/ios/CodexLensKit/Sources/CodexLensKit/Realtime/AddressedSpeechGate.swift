@@ -364,9 +364,20 @@ public struct AddressedSpeechGate: Sendable {
             of: "^(?:take|snap|capture|grab|get) (?:a |the )?pick(?: again)?$",
             options: .regularExpression
         ) != nil
-        if !requestCore.isEmpty,
-           isPhotoRequest || isExactPhotoHomophone
-            || highConfidenceVisualRequests.contains(where: requestCore.hasPrefix) {
+        let isVisualRequest = isPhotoRequest || isExactPhotoHomophone
+            || highConfidenceVisualRequests.contains(where: requestCore.hasPrefix)
+        if !requestCore.isEmpty, isVisualRequest {
+            // Short phrases such as "look at this" and "take a pic" are also
+            // ordinary human-to-human speech. In always-listening coach mode,
+            // require the reliable Codex address for those ambiguous short
+            // commands unless the assistant just spoke and expects a follow-up.
+            // Longer, unmistakable requests keep the natural no-wake path.
+            if conversationCoachEnabled,
+               !explicitlyAddressedToCodex,
+               !hasActiveFollowUpWindow,
+               wordCount <= 4 {
+                return .ignore("short unaddressed visual command")
+            }
             return .respond("explicit visual action")
         }
         if !requestCore.isEmpty,

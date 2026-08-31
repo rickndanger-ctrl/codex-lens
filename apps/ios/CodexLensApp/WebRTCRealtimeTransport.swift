@@ -1367,6 +1367,11 @@ final class WebRTCRealtimeTransport: NSObject, RealtimeTransport, @unchecked Sen
         case .respond(_, let forcedToolName):
             if let forcedToolName {
                 try sendResponseCreateLocked(response: [
+                    // This response exists only to produce the function call.
+                    // Text-only output prevents any speculative filler audio
+                    // (for example "ready when you are") before the image is
+                    // available. The tool-result response remains normal audio.
+                    "output_modalities": ["text"],
                     "instructions": "The latest wearer turn is an explicit visual request. Call capture_glasses_view exactly once using the wearer's exact request. Do not answer before the tool result.",
                     "tool_choice": [
                         "type": "function",
