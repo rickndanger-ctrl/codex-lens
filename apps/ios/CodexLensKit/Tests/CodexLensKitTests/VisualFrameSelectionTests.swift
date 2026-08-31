@@ -42,6 +42,16 @@ final class VisualFrameSelectionTests: XCTestCase {
         )
     }
 
+    func testOrdinaryPictureAndDescribeRequestStaysOnSingleFastFrame() {
+        XCTAssertEqual(
+            VisualCapturePlanner.plan(
+                request: "Codex, take a picture and tell me what you see.",
+                requestedMode: "read"
+            ),
+            VisualCapturePlan(mode: .fast, frameCount: 1)
+        )
+    }
+
     func testExplicitQuickTextRequestMayTradeQualityForSpeed() {
         XCTAssertEqual(
             VisualCapturePlanner.plan(request: "Quickly read this sign", requestedMode: "fast"),

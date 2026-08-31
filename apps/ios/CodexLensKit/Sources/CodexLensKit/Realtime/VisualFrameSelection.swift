@@ -99,11 +99,19 @@ public enum VisualCapturePlanner {
     /// deliberate careful pass remains bounded to three.
     public static func plan(request: String, requestedMode: String?) -> VisualCapturePlan {
         let normalizedRequest = request.lowercased()
-        let explicitlyQuick = normalizedRequest.contains("quick")
-            || normalizedRequest.contains("fast")
-        let explicitlyReadingText = [
-            "read", "text", "screen", "code", "document", "page", "sign",
-        ].contains { normalizedRequest.contains($0) }
+        let words = Set(
+            normalizedRequest
+                .components(separatedBy: CharacterSet.alphanumerics.inverted)
+                .filter { !$0.isEmpty }
+        )
+        let explicitlyQuick = !words.isDisjoint(with: ["quick", "quickly", "fast"])
+        // Match complete words. Substring matching made the assistant name
+        // "Codex" contain "code", routing every addressed photo request into
+        // the slower multi-frame reading path.
+        let explicitlyReadingText = !words.isDisjoint(with: [
+            "read", "text", "screen", "code", "document", "documents",
+            "page", "pages", "sign", "signs",
+        ])
 
         if requestedMode == VisualCaptureMode.careful.rawValue {
             return VisualCapturePlan(mode: .careful, frameCount: 3)

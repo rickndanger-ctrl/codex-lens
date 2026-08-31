@@ -7,8 +7,10 @@ import {
   focusComputerApp,
   inspectComputer,
   readFrontmostComputerApp,
+  setFrontmostComputerWindowState,
   type ComputerAppFocuser,
   type ComputerWindowCloser,
+  type ComputerWindowStateSetter,
   type ComputerController,
   type ComputerInspector,
   type FrontmostComputerAppReader,
@@ -23,6 +25,7 @@ export const COMPUTER_INSPECT_PATH = '/v1/computer/inspect';
 export const COMPUTER_FRONTMOST_PATH = '/v1/computer/frontmost';
 export const COMPUTER_FOCUS_PATH = '/v1/computer/focus';
 export const COMPUTER_CLOSE_WINDOW_PATH = '/v1/computer/close-window';
+export const COMPUTER_WINDOW_STATE_PATH = '/v1/computer/window-state';
 export const COMPUTER_USE_PATH = '/v1/computer/use';
 export const COMPUTER_PREPARE_PATH = '/v1/computer/prepare';
 export const COMPUTER_EXECUTE_PATH = '/v1/computer/execute';
@@ -57,6 +60,18 @@ export const ClosedComputerWindowResponseSchema = z.object({
   windowTitle: z.string().min(1).max(500).optional(),
   closed: z.boolean(),
   needsUserDecision: z.boolean(),
+}).strict();
+
+export const ComputerWindowStateRequestSchema = z.object({
+  action: z.enum(['minimize', 'restore']),
+}).strict();
+
+export const ComputerWindowStateResponseSchema = z.object({
+  app: z.string().min(1).max(120),
+  windowTitle: z.string().min(1).max(500).optional(),
+  action: z.enum(['minimize', 'restore']),
+  applied: z.literal(true),
+  minimized: z.boolean(),
 }).strict();
 
 export const PrepareComputerActionRequestSchema = z.object({
@@ -109,6 +124,7 @@ export function registerComputerRoutes(
   frontmostReader: FrontmostComputerAppReader = readFrontmostComputerApp,
   appFocuser: ComputerAppFocuser = focusComputerApp,
   windowCloser: ComputerWindowCloser = closeFrontmostComputerWindow,
+  windowStateSetter: ComputerWindowStateSetter = setFrontmostComputerWindowState,
 ): void {
   const actions = actionService ?? createComputerActionService({ control: controller });
   server.get(COMPUTER_FRONTMOST_PATH, {
@@ -176,6 +192,40 @@ export function registerComputerRoutes(
     const result = await windowCloser();
     if (!result.ok) {
       request.log.warn({ code: result.error.code }, 'frontmost window close failed');
+      return reply.code(503).send({
+        statusCode: 503,
+        error: 'Service Unavailable',
+        message: result.error.message,
+      });
+    }
+    return result.value;
+  });
+
+  server.post(COMPUTER_WINDOW_STATE_PATH, {
+    schema: {
+      body: jsonSchema(ComputerWindowStateRequestSchema),
+      response: {
+        200: jsonSchema(ComputerWindowStateResponseSchema),
+        400: jsonSchema(BoundaryBadRequestSchema),
+        503: jsonSchema(ComputerUnavailableSchema),
+      },
+    },
+  }, async (request, reply) => {
+    const body = validateBoundary(
+      ComputerWindowStateRequestSchema,
+      request.body,
+      'INVALID_COMPUTER_WINDOW_STATE_REQUEST',
+    );
+    if (!body.ok) {
+      return reply.code(400).send({
+        statusCode: 400,
+        error: 'Bad Request',
+        message: body.error.message,
+      });
+    }
+    const result = await windowStateSetter(body.value);
+    if (!result.ok) {
+      request.log.warn({ code: result.error.code }, 'frontmost window state change failed');
       return reply.code(503).send({
         statusCode: 503,
         error: 'Service Unavailable',

@@ -210,6 +210,47 @@ describe('POST /v1/computer/close-window', () => {
   });
 });
 
+describe('POST /v1/computer/window-state', () => {
+  it('minimizes or restores only the current window through the verified fast path', async () => {
+    const setWindowState = vi.fn(async ({ action }: { action: 'minimize' | 'restore' }) => ok({
+      app: 'Visual Studio Code',
+      windowTitle: 'CodexLensApp',
+      action,
+      applied: true as const,
+      minimized: action === 'minimize',
+    }));
+    const server = buildServer({ computerWindowStateSetter: setWindowState });
+    const response = await server.inject({
+      method: 'POST',
+      url: '/v1/computer/window-state',
+      headers: { authorization: `Bearer ${TOKEN}` },
+      payload: { action: 'minimize' },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      app: 'Visual Studio Code',
+      windowTitle: 'CodexLensApp',
+      action: 'minimize',
+      applied: true,
+      minimized: true,
+    });
+    expect(setWindowState).toHaveBeenCalledWith({ action: 'minimize' });
+    await server.close();
+  });
+
+  it('rejects any action outside the fixed minimize/restore allowlist', async () => {
+    const server = buildServer();
+    const response = await server.inject({
+      method: 'POST',
+      url: '/v1/computer/window-state',
+      headers: { authorization: `Bearer ${TOKEN}` },
+      payload: { action: 'quit', instruction: 'force it' },
+    });
+    expect(response.statusCode).toBe(400);
+    await server.close();
+  });
+});
+
 describe('computer action routes', () => {
   it('runs an ordinary reversible action directly with ordinary authority', async () => {
     const control = vi.fn(async (request: ComputerActionRequest) => ok({

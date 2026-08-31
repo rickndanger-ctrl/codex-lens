@@ -321,6 +321,20 @@ final class GatewayClientTests: XCTestCase {
         XCTAssertNil(transport.lastRequest?.httpBody)
     }
 
+    func testSetFrontmostComputerWindowStateUsesDeterministicEndpoint() async throws {
+        let transport = StubTransport { _ in
+            .init(status: 200, body: Data(#"{ "app": "Xcode", "windowTitle": "CodexLensApp", "action": "minimize", "applied": true, "minimized": true }"#.utf8))
+        }
+        let result = try await makeClient(transport).setFrontmostComputerWindowState(action: "minimize")
+        XCTAssertEqual(result.action, "minimize")
+        XCTAssertTrue(result.applied)
+        XCTAssertTrue(result.minimized)
+        XCTAssertEqual(transport.lastRequest?.httpMethod, "POST")
+        XCTAssertEqual(transport.lastRequest?.url?.path, "/v1/computer/window-state")
+        let body = String(data: transport.lastRequest?.httpBody ?? Data(), encoding: .utf8) ?? ""
+        XCTAssertTrue(body.contains("minimize"))
+    }
+
     func testSendPreparedTextUsesBoundConfirmationOnly() async throws {
         let transport = StubTransport { _ in
             .init(status: 200, body: Data("""

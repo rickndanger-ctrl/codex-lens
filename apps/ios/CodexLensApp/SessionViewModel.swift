@@ -1370,6 +1370,38 @@ final class SessionViewModel: ObservableObject {
             } catch {
                 output = .object(["error": .string(error.localizedDescription)])
             }
+        case "set_frontmost_mac_window_state":
+            guard let gateway else {
+                output = .object(["error": .string("The Mac gateway is not connected.")])
+                break
+            }
+            guard
+                let action = arguments.string("action"),
+                action == "minimize" || action == "restore"
+            else {
+                output = .object(["error": .string("The window action must be minimize or restore.")])
+                break
+            }
+            pendingComputerConfirmation = nil
+            pendingTextConfirmation = nil
+            lastUserTranscript = nil
+            lastUserTranscriptAt = nil
+            do {
+                let result = try await gateway.setFrontmostComputerWindowState(action: action)
+                var fields: [String: JSONValue] = [
+                    "app": .string(result.app),
+                    "action": .string(result.action),
+                    "applied": .bool(result.applied),
+                    "minimized": .bool(result.minimized),
+                    "instruction": .string("Confirm briefly that the requested window was \(action == "minimize" ? "minimized" : "restored")."),
+                ]
+                if let windowTitle = result.windowTitle {
+                    fields["windowTitle"] = .string(windowTitle)
+                }
+                output = .object(fields)
+            } catch {
+                output = .object(["error": .string(error.localizedDescription)])
+            }
         case "get_current_time":
             let now = Date()
             let timeZone = TimeZone.autoupdatingCurrent
@@ -1398,7 +1430,19 @@ final class SessionViewModel: ObservableObject {
                 break
             }
             beginExplicitCameraAttempt(reason: "Spoken glasses photo request")
-            let request = arguments.string("request")?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "Inspect what I am looking at."
+            let modelRequest = arguments.string("request")?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "Inspect what I am looking at."
+            // The forced visual tool call is model-authored and can paraphrase
+            // an ordinary "take a pic" request into words such as "screen" or
+            // "read", accidentally selecting the slower multi-photo path. Use
+            // the authoritative recent wearer transcript for capture planning.
+            let request: String
+            if let transcript = lastUserTranscript,
+               let transcribedAt = lastUserTranscriptAt,
+               Date().timeIntervalSince(transcribedAt) <= 30 {
+                request = transcript
+            } else {
+                request = modelRequest
+            }
             let requestedMode = arguments.string("mode")
             let capturePlan = VisualCapturePlanner.plan(
                 request: request,

@@ -81,6 +81,22 @@ public enum CodexLensTools {
         ])
     )
 
+    public static let setFrontmostMacWindowState = RealtimeToolDefinition(
+        name: "set_frontmost_mac_window_state",
+        description: "Quickly minimize or restore only the frontmost main Mac window, then verify its actual minimized state. Use this when the wearer directly asks to minimize, restore, or bring back the current window. If they name another app, call focus_mac_app first. This cannot close or quit an app, type, click controls, or resolve a dialog.",
+        parameters: .object([
+            "type": .string("object"),
+            "properties": .object([
+                "action": .object([
+                    "type": .string("string"),
+                    "enum": .array([.string("minimize"), .string("restore")]),
+                ]),
+            ]),
+            "required": .array([.string("action")]),
+            "additionalProperties": .bool(false),
+        ])
+    )
+
     /// Read visible accessibility text from one Mac app without changing it.
     public static let inspectMacApp = RealtimeToolDefinition(
         name: "inspect_mac_app",
@@ -260,6 +276,7 @@ public enum CodexLensTools {
         getFrontmostMacApp,
         focusMacApp,
         closeFrontmostMacWindow,
+        setFrontmostMacWindowState,
         inspectMacApp,
         inspectCodexProject,
         useMacComputer,

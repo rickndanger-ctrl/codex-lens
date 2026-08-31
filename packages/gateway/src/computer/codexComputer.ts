@@ -38,6 +38,20 @@ export interface ClosedComputerWindow {
   needsUserDecision: boolean;
 }
 
+export type ComputerWindowStateAction = 'minimize' | 'restore';
+
+export interface ComputerWindowStateRequest {
+  action: ComputerWindowStateAction;
+}
+
+export interface ComputerWindowStateResult {
+  app: string;
+  windowTitle?: string;
+  action: ComputerWindowStateAction;
+  applied: true;
+  minimized: boolean;
+}
+
 export type ComputerInspector = (
   request: ComputerInspectionRequest,
 ) => Promise<Result<ComputerInspection>>;
@@ -49,6 +63,10 @@ export type ComputerAppFocuser = (
 ) => Promise<Result<FocusedComputerApp>>;
 
 export type ComputerWindowCloser = () => Promise<Result<ClosedComputerWindow>>;
+
+export type ComputerWindowStateSetter = (
+  request: ComputerWindowStateRequest,
+) => Promise<Result<ComputerWindowStateResult>>;
 
 export type ComputerSurface = 'auto' | 'computer' | 'chrome';
 export type ComputerAuthorization = 'ordinary' | 'confirmed';
@@ -80,6 +98,7 @@ const OSASCRIPT = '/usr/bin/osascript';
 const OPEN = '/usr/bin/open';
 const FOCUS_APP_TIMEOUT_MS = 6_000;
 const CLOSE_WINDOW_TIMEOUT_MS = 4_000;
+const WINDOW_STATE_TIMEOUT_MS = 4_000;
 const ACTION_TIMEOUT_MS = 90_000;
 const CHATGPT_RESOURCES =
   process.env.CODEX_LENS_CHATGPT_RESOURCES?.trim() ||
@@ -650,6 +669,106 @@ export const closeFrontmostComputerWindow: ComputerWindowCloser = async () => {
     windowTitle: before.value.windowTitle,
     closed,
     needsUserDecision: !closed,
+  });
+};
+
+/**
+ * Minimizes or restores only the current main window through its standard
+ * accessibility attribute. The requested state is read back before success is
+ * returned, so a voice acknowledgement never relies on an unverified keypress.
+ */
+export const setFrontmostComputerWindowState: ComputerWindowStateSetter = async (request) => {
+  const before = await readFrontmostComputerApp();
+  if (!before.ok) {
+    return err('WINDOW_STATE_UNAVAILABLE', 'The frontmost Mac app has no adjustable window.');
+  }
+  const requestedMinimized = request.action === 'minimize';
+  const verified = await new Promise<boolean>((resolve) => {
+    const child = spawn(OSASCRIPT, [
+      '-e',
+      'tell application "System Events"',
+      '-e',
+      'set activeProcess to first application process whose frontmost is true',
+      '-e',
+      'set selectedWindow to missing value',
+      '-e',
+      'set largestArea to 0',
+      '-e',
+      'repeat with windowRef in windows of activeProcess',
+      '-e',
+      'try',
+      '-e',
+      'if value of attribute "AXMain" of windowRef is true then',
+      '-e',
+      'set selectedWindow to windowRef',
+      '-e',
+      'exit repeat',
+      '-e',
+      'end if',
+      '-e',
+      'set {windowWidth, windowHeight} to size of windowRef',
+      '-e',
+      'set windowArea to windowWidth * windowHeight',
+      '-e',
+      'if windowArea > largestArea then',
+      '-e',
+      'set largestArea to windowArea',
+      '-e',
+      'set selectedWindow to windowRef',
+      '-e',
+      'end if',
+      '-e',
+      'end try',
+      '-e',
+      'end repeat',
+      '-e',
+      'if selectedWindow is missing value then error "No adjustable window"',
+      '-e',
+      `set value of attribute "AXMinimized" of selectedWindow to ${requestedMinimized ? 'true' : 'false'}`,
+      '-e',
+      'delay 0.15',
+      '-e',
+      'return value of attribute "AXMinimized" of selectedWindow as text',
+      '-e',
+      'end tell',
+    ], {
+      shell: false,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    let output = '';
+    let settled = false;
+    const finish = (value: boolean): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      resolve(value);
+    };
+    child.stdout.setEncoding('utf8');
+    child.stdout.on('data', (chunk: string) => {
+      if (output.length < 32) output += chunk.slice(0, 32 - output.length);
+    });
+    child.once('error', () => finish(false));
+    child.once('close', (code) => {
+      const actual = output.trim().toLocaleLowerCase('en-US');
+      finish(code === 0 && actual === String(requestedMinimized));
+    });
+    const timeout = setTimeout(() => {
+      child.kill();
+      finish(false);
+    }, WINDOW_STATE_TIMEOUT_MS);
+  });
+  if (!verified) {
+    return err(
+      'WINDOW_STATE_NOT_VERIFIED',
+      `The frontmost Mac window did not ${request.action}.`,
+    );
+  }
+  return ok({
+    app: before.value.app,
+    windowTitle: before.value.windowTitle,
+    action: request.action,
+    applied: true as const,
+    minimized: requestedMinimized,
   });
 };
 

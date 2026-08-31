@@ -193,6 +193,14 @@ public struct ClosedComputerWindow: Codable, Equatable, Sendable {
     public let needsUserDecision: Bool
 }
 
+public struct ComputerWindowStateResult: Codable, Equatable, Sendable {
+    public let app: String
+    public let windowTitle: String?
+    public let action: String
+    public let applied: Bool
+    public let minimized: Bool
+}
+
 public struct WebResearchSource: Codable, Equatable, Sendable {
     public let title: String
     public let url: String

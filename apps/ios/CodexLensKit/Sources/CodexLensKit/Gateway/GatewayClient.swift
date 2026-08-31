@@ -123,6 +123,17 @@ public struct GatewayClient: Sendable {
         return try await perform(request, as: ClosedComputerWindow.self)
     }
 
+    /// Minimizes or restores only the current main Mac window and returns only
+    /// after the gateway verifies the resulting accessibility state.
+    public func setFrontmostComputerWindowState(action: String) async throws -> ComputerWindowStateResult {
+        let request = try makeRequest(
+            method: "POST",
+            path: "/v1/computer/window-state",
+            jsonBody: ["action": action]
+        )
+        return try await perform(request, as: ComputerWindowStateResult.self)
+    }
+
     /// Asks the Mac gateway for one read-only accessibility inspection.
     public func inspectComputer(app: String, question: String) async throws -> ComputerInspection {
         let request = try makeRequest(

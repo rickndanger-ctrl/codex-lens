@@ -19,6 +19,7 @@ import type {
   ComputerController,
   ComputerInspector,
   ComputerWindowCloser,
+  ComputerWindowStateSetter,
   FrontmostComputerAppReader,
 } from './computer/codexComputer.js';
 import { registerMessageRoutes } from './routes/messages.js';
@@ -47,6 +48,8 @@ export interface BuildServerOptions {
   computerAppFocuser?: ComputerAppFocuser;
   /** Closes only the current main window and never resolves save dialogs. */
   computerWindowCloser?: ComputerWindowCloser;
+  /** Minimizes or restores the current main window and verifies the result. */
+  computerWindowStateSetter?: ComputerWindowStateSetter;
   /** Operates Mac apps and Chrome for an explicit user-directed task. */
   computerController?: ComputerController;
   /** Resolves, prepares, and confirmation-gates Messages sends. */
@@ -136,6 +139,7 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
     options.frontmostComputerAppReader,
     options.computerAppFocuser,
     options.computerWindowCloser,
+    options.computerWindowStateSetter,
   );
   registerMessageRoutes(
     server,

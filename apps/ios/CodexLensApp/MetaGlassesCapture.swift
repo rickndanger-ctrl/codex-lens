@@ -33,7 +33,7 @@ enum GlassesCaptureError: LocalizedError {
         case .streamUnavailable: "The glasses camera stream is unavailable."
         case .streamTimedOut: "The glasses camera did not become ready."
         case .photoRequestRejected: "The glasses rejected the photo request."
-        case .photoTimedOut: "The glasses did not return a photo in time."
+        case .photoTimedOut: "The glasses camera did not return an image in time."
         case .invalidImage: "The captured image could not be decoded safely."
         }
     }
@@ -778,8 +778,8 @@ final class MetaGlassesCapture {
         count: Int,
         profile: VisualCaptureProfile
     ) async throws -> CapturedVisualEvidence {
-        // Meta supports one still request at a time. Reject overlapping model
-        // tool calls before either can suspend and race the shared camera.
+        // Keep one visual request in flight so overlapping model tool calls do
+        // not race the shared camera or consume the same streamed frames.
         guard !isPhotoCaptureInFlight else {
             throw GlassesCaptureError.photoRequestRejected
         }
@@ -792,33 +792,45 @@ final class MetaGlassesCapture {
         try await connectWithoutLifecycleGate()
         try Task.checkCancellation()
         guard let session else { throw GlassesCaptureError.noEligibleDevice(deviceDiagnostics) }
-
-        let activeCamera: MWDATCamera.Camera
-        if let camera {
-            activeCamera = camera
-        } else {
-            let configuration = StreamConfiguration(
-                // Match Meta's CameraAccess reference configuration. Still
-                // capture delivery on physical glasses is tied to the normal
-                // HEVC camera pipeline; the low-rate raw diagnostic stream can
-                // accept capturePhoto() without ever publishing photo data.
-                videoCodec: .hvc1,
-                resolution: profile == .reading ? .high : .low,
-                // Still capture does not need a hot 24-fps preview. Two fps is
-                // Meta's valid HVC1 minimum and preserves the full-resolution
-                // photo while sharply reducing heat and battery use.
-                frameRate: 2
-            )
-            guard let created = try session.addCamera(config: configuration) else {
+        // A background HVC1 camera cannot be reused for this workaround. Make
+        // every on-demand request own a known raw stream configuration.
+        if camera != nil {
+            guard await stopCameraWithoutLifecycleGate() else {
                 throw GlassesCaptureError.streamUnavailable
             }
-            camera = created
-            cameraMode = .transient
-            activeCamera = created
-            observeCameraLifecycle(created, generation: sessionGeneration)
-            trace("camera added; state=\(String(describing: created.state))")
         }
+
+        let requestedFrameCount = max(1, min(count, 3))
+        let configuration = StreamConfiguration(
+            // Match the exact HFP-compatible configuration documented in
+            // Meta DAT issue #260. HVC1 can report `.streaming` without
+            // emitting decodable frames to a late subscriber, while this
+            // raw stream continues delivering frames with HFP voice live.
+            videoCodec: .raw,
+            resolution: .low,
+            frameRate: 24
+        )
+        guard let activeCamera = try session.addCamera(config: configuration) else {
+            throw GlassesCaptureError.streamUnavailable
+        }
+        camera = activeCamera
+        cameraMode = .transient
+        observeCameraLifecycle(activeCamera, generation: sessionGeneration)
+        trace("camera added; state=\(String(describing: activeCamera.state))")
         let cameraStream = activeCamera.stream
+
+        // Subscribe before Stream.start(). Meta's reference ordering and live
+        // device behavior both require the consumer to be present when the raw
+        // stream begins; attaching after `.streaming` can miss every frame.
+        let latch = VideoFrameBurstLatch(targetCount: requestedFrameCount)
+        let frameToken = cameraStream.videoFramePublisher.listen { frame in
+            guard let image = frame.makeUIImage(),
+                  let jpeg = image.jpegData(compressionQuality: 0.92) else { return }
+            Task { await latch.append(jpeg) }
+        }
+        let errorToken = cameraStream.errorPublisher.listen { error in
+            Task { await latch.resolve(.failure(error)) }
+        }
 
         isCameraActive = true
         // Meta's 0.9 lifecycle starts the child stream immediately after
@@ -828,112 +840,83 @@ final class MetaGlassesCapture {
             cameraStream.start()
             trace("stream start requested; state=\(String(describing: cameraStream.state))")
         }
-        try await waitUntilStreaming(cameraStream)
-        try Task.checkCancellation()
-
-        let requestedFrameCount = max(1, min(count, 3))
-        var candidates: [CapturedFrameCandidate] = []
-        for index in 0..<requestedFrameCount {
-            if isThermallyBlocked {
-                if candidates.isEmpty {
-                    throw GlassesCaptureError.thermalProtection(thermalStatus)
-                }
-                trace("burst stopped after \(candidates.count) frame(s) for thermal protection")
-                break
-            }
-            let latch = PhotoCaptureLatch()
-            let photoToken = cameraStream.photoDataPublisher.listen { photo in
-                Task { await latch.resolve(.success(photo.data)) }
-            }
-            let errorToken = cameraStream.errorPublisher.listen { error in
-                Task { await latch.resolve(.failure(error)) }
-            }
-
-            // HEIC preserves more fine edge detail at a given transfer size,
-            // which matters for the small letter strokes in reading mode. The
-            // image is decoded locally and still leaves the app as a bounded,
-            // metadata-stripped JPEG. Keep the proven fast-photo path on JPEG.
-            let photoFormat: PhotoCaptureFormat = profile == .reading ? .heic : .jpeg
-            guard cameraStream.capturePhoto(format: photoFormat) else {
-                await photoToken.cancel()
-                await errorToken.cancel()
-                if !candidates.isEmpty {
-                    trace("burst stopped after \(candidates.count) frame(s): next photo request rejected")
-                    break
-                }
-                throw GlassesCaptureError.photoRequestRejected
-            }
-            trace("burst photo \(index + 1) request accepted")
-            let timeoutTask = Task {
-                do {
-                    try await Task.sleep(for: .seconds(12))
-                } catch {
-                    return
-                }
-                guard !Task.isCancelled else { return }
-                await latch.resolve(.failure(GlassesCaptureError.photoTimedOut))
-            }
-            do {
-                let original = try await latch.wait()
-                timeoutTask.cancel()
-                guard let rawImage = UIImage(data: original) else {
-                    throw GlassesCaptureError.invalidImage
-                }
-                let pixelWidth = rawImage.cgImage?.width
-                    ?? Int(rawImage.size.width * rawImage.scale)
-                let pixelHeight = rawImage.cgImage?.height
-                    ?? Int(rawImage.size.height * rawImage.scale)
-                let recognition: TextRecognitionEvidence
-                let sharpness: Double
-                if profile == .reading {
-                    async let pendingRecognition = Self.recognizeText(in: original)
-                    async let pendingSharpness = Self.measureNormalizedSharpness(in: original)
-                    (recognition, sharpness) = await (pendingRecognition, pendingSharpness)
-                } else {
-                    recognition = .empty
-                    sharpness = await Self.measureNormalizedSharpness(in: original)
-                }
-                let sanitized = try sanitizeJPEGImage(rawImage, profile: profile)
-                let quality = VisualFrameQuality(
-                    recognizedCharacterCount: recognition.characterCount,
-                    recognizedLineCount: recognition.lineCount,
-                    averageTextConfidence: recognition.averageConfidence,
-                    normalizedSharpness: sharpness,
-                    pixelCount: pixelWidth * pixelHeight,
-                    encodedByteCount: sanitized.count
-                )
-                candidates.append(CapturedFrameCandidate(
-                    jpegData: sanitized,
-                    recognizedText: recognition.text,
-                    quality: quality
-                ))
-                let elapsed = captureStarted.duration(to: .now)
-                trace("burst photo \(index + 1) received: raw=\(original.count) bytes pixels=\(pixelWidth)x\(pixelHeight) sent=\(sanitized.count) bytes text=\(recognition.characterCount) confidence=\(String(format: "%.3f", recognition.averageConfidence)) sharpness=\(String(format: "%.4f", sharpness)) elapsed=\(elapsed)")
-            } catch {
-                timeoutTask.cancel()
-                await photoToken.cancel()
-                await errorToken.cancel()
-                if !candidates.isEmpty, !(error is CancellationError) {
-                    trace("burst stopped after \(candidates.count) usable frame(s): \(error.localizedDescription)")
-                    break
-                }
-                throw error
-            }
-            await photoToken.cancel()
+        do {
+            try await waitUntilStreaming(cameraStream)
+            try Task.checkCancellation()
+        } catch {
+            await frameToken.cancel()
             await errorToken.cancel()
-            if index + 1 < requestedFrameCount {
-                // Meta pauses HVC1 for every still. Give the pause event a
-                // moment to arrive, then wait for the same armed stream to
-                // resume rather than racing the next capturePhoto() request.
-                try await Task.sleep(for: .milliseconds(180))
-                do {
-                    try await waitUntilStreaming(cameraStream)
-                } catch {
-                    if candidates.isEmpty { throw error }
-                    trace("burst stopped while waiting for stream resume: \(error.localizedDescription)")
-                    break
-                }
+            throw error
+        }
+
+        if isThermallyBlocked {
+            await frameToken.cancel()
+            await errorToken.cancel()
+            throw GlassesCaptureError.thermalProtection(thermalStatus)
+        }
+
+        // Meta DAT issue #260: with the wearable HFP microphone active,
+        // capturePhoto() returns true but photoDataPublisher never fires. The
+        // video publisher remains healthy. Taking the next streamed frames is
+        // therefore the reliable simultaneous voice + vision path and avoids
+        // interrupting the working WebRTC voice session.
+        trace("waiting for \(requestedFrameCount) streamed visual frame(s)")
+        let timeoutTask = Task {
+            do {
+                try await Task.sleep(for: .seconds(4))
+            } catch {
+                return
             }
+            guard !Task.isCancelled else { return }
+            await latch.finishWithAvailableFrames()
+        }
+
+        let originals: [Data]
+        do {
+            originals = try await latch.wait()
+        } catch {
+            timeoutTask.cancel()
+            await frameToken.cancel()
+            await errorToken.cancel()
+            throw error
+        }
+        timeoutTask.cancel()
+        await frameToken.cancel()
+        await errorToken.cancel()
+
+        var candidates: [CapturedFrameCandidate] = []
+        for (index, original) in originals.enumerated() {
+            guard let rawImage = UIImage(data: original) else { continue }
+            let pixelWidth = rawImage.cgImage?.width
+                ?? Int(rawImage.size.width * rawImage.scale)
+            let pixelHeight = rawImage.cgImage?.height
+                ?? Int(rawImage.size.height * rawImage.scale)
+            let recognition: TextRecognitionEvidence
+            let sharpness: Double
+            if profile == .reading {
+                async let pendingRecognition = Self.recognizeText(in: original)
+                async let pendingSharpness = Self.measureNormalizedSharpness(in: original)
+                (recognition, sharpness) = await (pendingRecognition, pendingSharpness)
+            } else {
+                recognition = .empty
+                sharpness = await Self.measureNormalizedSharpness(in: original)
+            }
+            let sanitized = try sanitizeJPEGImage(rawImage, profile: profile)
+            let quality = VisualFrameQuality(
+                recognizedCharacterCount: recognition.characterCount,
+                recognizedLineCount: recognition.lineCount,
+                averageTextConfidence: recognition.averageConfidence,
+                normalizedSharpness: sharpness,
+                pixelCount: pixelWidth * pixelHeight,
+                encodedByteCount: sanitized.count
+            )
+            candidates.append(CapturedFrameCandidate(
+                jpegData: sanitized,
+                recognizedText: recognition.text,
+                quality: quality
+            ))
+            let elapsed = captureStarted.duration(to: .now)
+            trace("stream frame \(index + 1) received: raw=\(original.count) bytes pixels=\(pixelWidth)x\(pixelHeight) sent=\(sanitized.count) bytes text=\(recognition.characterCount) confidence=\(String(format: "%.3f", recognition.averageConfidence)) sharpness=\(String(format: "%.4f", sharpness)) elapsed=\(elapsed)")
         }
         guard let selectedFrameIndex = VisualFrameSelector.bestIndex(
             in: candidates.map(\.quality)
@@ -1602,18 +1585,40 @@ final class MetaGlassesCapture {
     }
 }
 
-private actor PhotoCaptureLatch {
-    private var result: Result<Data, Error>?
-    private var continuation: CheckedContinuation<Data, Error>?
+private actor VideoFrameBurstLatch {
+    private let targetCount: Int
+    private var frames: [Data] = []
+    private var result: Result<[Data], Error>?
+    private var continuation: CheckedContinuation<[Data], Error>?
 
-    func wait() async throws -> Data {
+    init(targetCount: Int) {
+        self.targetCount = max(1, targetCount)
+    }
+
+    func wait() async throws -> [Data] {
         if let result { return try result.get() }
         return try await withCheckedThrowingContinuation { continuation in
             self.continuation = continuation
         }
     }
 
-    func resolve(_ result: Result<Data, Error>) {
+    func append(_ frame: Data) {
+        guard result == nil else { return }
+        frames.append(frame)
+        if frames.count >= targetCount {
+            resolve(.success(Array(frames.prefix(targetCount))))
+        }
+    }
+
+    func finishWithAvailableFrames() {
+        if frames.isEmpty {
+            resolve(.failure(GlassesCaptureError.photoTimedOut))
+        } else {
+            resolve(.success(frames))
+        }
+    }
+
+    func resolve(_ result: Result<[Data], Error>) {
         guard self.result == nil else { return }
         self.result = result
         continuation?.resume(with: result)
